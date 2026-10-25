@@ -53,6 +53,7 @@ class Settings(BaseSettings):
     # ---- LLM provider ----
     LLM_PROVIDER: Literal["openai", "anthropic", "fake"] = "openai"
     OPENAI_API_KEY: str | None = None
+    OPENAI_BASE_URL: str | None = None  # any OpenAI-compatible endpoint, e.g. https://openrouter.ai/api/v1
     ANTHROPIC_API_KEY: str | None = None
     LLM_MODEL: str | None = None
     LLM_TEMPERATURE: float = 0.2  # sent only to providers/models that accept sampling parameters
@@ -140,6 +141,7 @@ class Settings(BaseSettings):
 
     @field_validator(
         "OPENAI_API_KEY",
+        "OPENAI_BASE_URL",
         "ANTHROPIC_API_KEY",
         "LLM_MODEL",
         "HEIMDALL_PROVIDER",

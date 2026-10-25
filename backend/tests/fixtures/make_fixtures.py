@@ -256,6 +256,20 @@ DAMAGED_MANIFEST = [
     dict(id="RM-DOC-0196", file="docs/cut_off_story.txt", title="Assemblers warn of lay-offs", outlet="Northern Business Daily", date="2025-03-22", tier=2, event="EVT-A", fmt="txt", words=400),
     dict(id="RM-DOC-0197", file="docs/notice_really_pdf.txt", title="Pilotage notice", outlet="Serpent Canal Authority", date="2025-03-04", tier=1, event="EVT-A", fmt="pdf", words=60),
     dict(id="RM-DOC-0198", file="docs/missing_file.txt", title="Listed but never delivered", outlet="Runewire", date="2025-03-25", tier=2, event="EVT-A", fmt="txt", words=80),
+    # a UTF-8 header glued to a UTF-16 body -> REPAIRED
+    dict(id="RM-DOC-0186", file="docs/mixed_encoding.txt", title="Ferry operators add sailings", outlet="Corvenia Courier", date="2025-03-18", tier=3, event="EVT-A", fmt="txt", words=70),
+    # empty file, and the manifest names it without the docs/ prefix -> QUARANTINED, never MISSING
+    dict(id="RM-DOC-0187", file="empty_wire.txt", title="Wire that arrived empty", outlet="Runewire", date="2025-03-20", tier=2, event="EVT-A", fmt="txt", words=90),
+    # the full explainer and a delivery of it that was cut off mid-sentence
+    dict(id="RM-DOC-0188", file="docs/explainer_full.txt", title="How the Serpent Canal detour works", outlet="Freight & Ledger", date="2025-03-11", tier=2, event="EVT-A", fmt="txt", words=260),
+    dict(id="RM-DOC-0189", file="docs/explainer_cut.txt", title="How the Serpent Canal detour works", outlet="Freight & Ledger", date="2025-03-11", tier=2, event="EVT-A", fmt="txt", words=260),
+]
+
+EXPLAINER = [
+    "The Serpent Canal detour adds sea miles rather than removing them, and the cost shows up in freight rates.",
+    "Ships that would have transited the northern channel now round the Eskerland cape, which adds about nine days.",
+    "Forwarders price that delay into every contract, so the quoted rate moves before any volume does.",
+    "Rail is the only overland alternative and the Harrowgate terminal can unload at most twelve trains a day.",
 ]
 
 
@@ -487,6 +501,30 @@ def write_damaged(docs: Path) -> list[dict[str, object]]:
                country="Brenmark", sector="electronics", title="Unlisted wire copy",
                body=["Unlisted copy: electronics importers in Brenmark expect canal traffic to resume by summer."])
     write_txt(docs / "off_manifest_wire.txt", off, 2)
+    # a plain-text header glued to a UTF-16 body -> split at the BOM and repaired
+    mixed = dict(id="RM-DOC-0186", fmt="txt", outlet="Corvenia Courier", date="2025-03-18", stype="news_report",
+                 event="EVT-A", country="Corvenia", sector="electronics", title="Ferry operators add sailings",
+                 body=["Ferry operators on the Corvenia run added two sailings a week after the canal closed.",
+                       "Hauliers said the extra capacity still covers only a small share of the lost tonnage."])
+    head = "\n".join(header_lines(mixed, 0)) + "\n\n"
+    body = "\n\n".join(mixed["body"]) + "\n"  # type: ignore[arg-type]
+    (docs / "mixed_encoding.txt").write_bytes(head.encode("utf-8") + b"\xff\xfe" + body.encode("utf-16-le"))
+    # empty file whose manifest entry omits the docs/ prefix -> resolved by name, then quarantined
+    (docs / "empty_wire.txt").write_bytes(b"")
+    # the full explainer, and a copy of it cut off mid-sentence -> DUPLICATE + TRUNCATED
+    full = dict(id="RM-DOC-0188", fmt="txt", outlet="Freight & Ledger", date="2025-03-11", stype="explainer",
+                event="EVT-A", country="Brenmark", sector="electronics",
+                title="How the Serpent Canal detour works", body=EXPLAINER)
+    write_txt(docs / "explainer_full.txt", full, 0)
+    cut = "\n".join(header_lines(dict(full, id="RM-DOC-0189"), 0)) + "\n\n" + "\n\n".join(EXPLAINER[:3])
+    (docs / "explainer_cut.txt").write_text(cut[: cut.rindex(" so the quoted")], encoding="utf-8")
+    # pack furniture: neither is a document, so neither is indexed or reported off-manifest
+    (out_root := docs.parent).joinpath("README.md").write_text(
+        "# mini_runemark\n\nSynthetic fixture corpus. The map below is human reference only.\n", encoding="utf-8")
+    out_root.joinpath("runemark_map.png").write_bytes(
+        bytes.fromhex("89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000a4944415408d7"
+                      "6360000000020001e221bc330000000049454e44ae426082"))
+    out_root.joinpath("hashes.sha256").write_text("deadbeef  docs/rm_doc_0101.pdf\n", encoding="utf-8")
     for m in DAMAGED_MANIFEST:
         rows.append(dict(doc_id=m["id"], file=m["file"], title=m["title"], outlet=m["outlet"], pub_date=m["date"],
                          tier=m["tier"], event_id=m["event"], format=m["fmt"], word_count=m["words"]))

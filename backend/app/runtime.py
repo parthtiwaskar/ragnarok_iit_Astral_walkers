@@ -93,7 +93,7 @@ def make_llm(agent: str, settings: Settings) -> LLMClient:
     if provider == "openai":
         from app.llm.openai_client import OpenAIClient
 
-        return OpenAIClient(model, settings.OPENAI_API_KEY, timeout_s=timeout)
+        return OpenAIClient(model, settings.OPENAI_API_KEY, timeout_s=timeout, base_url=settings.OPENAI_BASE_URL)
     return PolicyLLM(agent, settings)
 
 

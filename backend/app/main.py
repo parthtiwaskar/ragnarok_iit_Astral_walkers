@@ -98,11 +98,13 @@ def _range_rows(current: RuntimeCase) -> list[dict[str, Any]]:
     if latest is None:
         return []
     positions = {(p.country, p.sector, p.side): p for run in cf.runs for p in run.positions}
+    # FinalRange carries no table ids; the scope row for the same country/sector does
+    scope_tables = {(r.country, r.sector): r.trade_tables for r in (cf.scope.rows if cf.scope else [])}
     rows: list[dict[str, Any]] = []
     for final in latest.final_ranges:
         stats = row_stats(
             current.context.services.repo,
-            final.trade_tables,
+            scope_tables.get((final.country, final.sector), []),
             cf.scope.event_date if cf.scope else None,
             current.context.clock,
             current.context.services.settings.BASELINE_MONTHS,
