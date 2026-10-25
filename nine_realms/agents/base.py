@@ -73,7 +73,7 @@ class Agent:
         for step in range(limits.max_steps_per_turn + 3):
             force_final = step >= limits.max_steps_per_turn
             self._compact(messages)
-            self.budget.charge_llm()
+            self.budget.charge_llm(self.name)  # Odin may dip into the reserve the others cannot
             if step == limits.max_steps_per_turn:
                 messages.append({"role": "user", "content": "Tool budget exhausted. Do NOT call tools. Reply now with the final JSON object only."})
             try:
@@ -83,8 +83,8 @@ class Agent:
             except Exception as exc:  # provider error: fail this agent's turn, not the whole case
                 self.bus.emit("llm_error", agent=self.name, run=run, phase=phase, error=str(exc)[:300])
                 raise AgentFailure(f"{self.name} {phase}: LLM error: {str(exc)[:200]}") from exc
-            self.budget.add_tokens(resp.tokens)
-            self.bus.emit("llm_call", agent=self.name, run=run, phase=phase, step=step, tokens=resp.tokens, context_chars=sum(len(str(m.get('content') or '')) for m in messages))
+            self.budget.add_tokens(resp.tokens, resp.cost_usd)
+            self.bus.emit("llm_call", agent=self.name, run=run, phase=phase, step=step, tokens=resp.tokens, usd=round(resp.cost_usd, 5), context_chars=sum(len(str(m.get('content') or '')) for m in messages))
             if resp.tool_calls and not force_final:
                 messages.append({"role": "assistant", "content": resp.text,
                                  "tool_calls": [{"id": c.id, "name": c.name, "args": c.args} for c in resp.tool_calls]})

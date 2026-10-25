@@ -177,9 +177,24 @@ function caseRow(c) {
   return `<tr class="clickable" data-action="open-case-id" data-case="${escapeHtml(c.case_id)}"><td><div class="table-case-title"><span class="table-case-icon">↗</span><span><strong>${escapeHtml(caseTitle(c))}</strong><small>${escapeHtml(c.event_id || "—")} · ${c.runs} run${c.runs === 1 ? "" : "s"} · ${c.claims} claims</small></span></div></td><td>${focus}<small class="focus-detail">${escapeHtml(sectors)}</small></td><td>${statusBadge(c.status, state.running === c.case_id)}</td><td class="date-cell">${fmtStamp(c.updated_at)}</td><td><button class="row-arrow" data-action="open-case-id" data-case="${escapeHtml(c.case_id)}" aria-label="Open investigation">↗</button></td></tr>`;
 }
 
+// Provider and billing failures, in the words a presenter can act on (mirrors nine_realms/preflight.py).
+const PROVIDER_PROBLEMS = [
+  [/credit balance is too low/i, "The AI provider account has no credit left, so the trial could not run."],
+  [/usage limits?/i, "The AI provider account reached its usage limit, so the trial could not run."],
+  [/insufficient (balance|credits)|\b402\b/i, "The AI provider account has no balance, so the trial could not run."],
+  [/invalid x-api-key|authentication|\b401\b/i, "The AI provider rejected the API key."],
+  [/not_found|\b404\b/i, "The configured AI model is not available to this API key."],
+  [/overloaded|rate limit|\b429\b|\b529\b/i, "The AI provider is busy or rate-limited. Try again in a minute."],
+];
+
 function friendlyReason(reasons = []) {
   const text = reasons.join(" ");
-  if (/usage limit|rate limit|max_tokens|max_llm_calls|case_timeout/i.test(text)) return "A usage or time limit was reached before the second trial run finished.";
+  if (/LLM error|server error|HTTP \d{3}|Error code: \d{3}/i.test(text)) {
+    const hit = PROVIDER_PROBLEMS.find(([pattern]) => pattern.test(text));
+    if (hit) return hit[1];
+  }
+  if (/max_usd/i.test(text)) return "The trial reached its spending cap and stopped early; Odin ruled on what was argued so far.";
+  if (/rate limit|max_tokens|max_llm_calls|case_timeout/i.test(text)) return "A usage or time limit was reached before the second trial run finished.";
   if (/max_runs=1\b/.test(text)) return "Fast answer: one trial run, so Odin could not send the case back for more evidence.";
   if (/unchallenged/i.test(text)) return "One side went unchallenged.";
   if (/new evidence/i.test(text)) return "A second run could not find new evidence.";
@@ -939,9 +954,22 @@ async function showAnswer(id, { scroll = true } = {}) {
     root.classList.add("reveal");
     document.querySelector(".ask-hero")?.classList.add("has-answer");
     if (scroll) root.scrollIntoView({ behavior: "smooth", block: "start" });
+    showTrialCost(id);
   } catch (error) {
     root.innerHTML = errorBox("Could not load this answer", error.message);
   }
+}
+
+// What the trial spent on the AI provider, from its case_finished event (live trials on metered providers only).
+async function showTrialCost(id) {
+  try {
+    const data = await api(`/cases/${encodeURIComponent(id)}/events?types=case_finished&limit=5`);
+    const done = (data.events || []).at(-1);
+    const cell = document.querySelector("#side-cost");
+    if (!done || !cell || !(done.usd > 0) || state.answerId !== id) return;
+    cell.querySelector("dd").textContent = `$${Number(done.usd).toFixed(2)} · ${done.llm_calls} AI calls`;
+    cell.hidden = false;
+  } catch { /* cost is optional detail */ }
 }
 
 // Established findings: Odin's briefing when he wrote one, else the claims he ruled established.
@@ -1012,7 +1040,7 @@ function answerMarkup(run) {
     <div class="answer-meta">${statusBadge(run.status)}${run.verified ? '<span class="verified">✓ Event verified</span>' : ""}${(run.runs || []).length === 1 ? "<span>Fast answer · 1 trial run</span>" : ""}<span>As of ${escapeHtml(fmtDate(run.as_of))}</span><span>Case ${escapeHtml(run.case_id)}</span>${run.provider === "imported" ? "<span>Saved trial</span>" : ""}</div></header>`;
   if (!["COMPLETE", "INCOMPLETE"].includes(run.status)) {
     const rejected = run.status === "REJECTED";
-    const why = rejected ? run.verdict_reason || friendlyReason(run.status_reasons) : (run.status_reasons || []).join(" ") || "The trial stopped before any ruling.";
+    const why = rejected ? run.verdict_reason || friendlyReason(run.status_reasons) : (run.status_reasons || []).length ? friendlyReason(run.status_reasons) : "The trial stopped before any ruling.";
     return `${head}<div class="answer-card"><h2>${rejected ? "The event could not be verified" : "This question could not be answered"}</h2><p>${escapeHtml(why)}</p>
       <div class="answer-actions"><button class="button button-quiet" data-action="ask-again">Ask another question</button></div></div>`;
   }
@@ -1042,6 +1070,7 @@ function answerMarkup(run) {
         <div><dt>Trial runs</dt><dd>${(run.runs || []).length}</dd></div>
         <div><dt>Sources cited</dt><dd>${sources}</dd></div>
         <div><dt>Case ID</dt><dd>${escapeHtml(run.case_id)}</dd></div>
+        <div id="side-cost" hidden><dt>AI cost</dt><dd></dd></div>
       </dl>
     </aside>`;
   return `${head}

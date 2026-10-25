@@ -118,6 +118,18 @@ class Store:
         with self._lock:
             return int(self.db.execute("SELECT COUNT(*) FROM cases WHERE created_at >= ? AND provider != 'imported'", (ts,)).fetchone()[0])
 
+    def spent_since(self, ts: float) -> float:
+        """US$ reported by finished trials since `ts` (case_finished events carry each trial's metered cost)."""
+        with self._lock:
+            rows = self.db.execute("SELECT data FROM events WHERE type='case_finished' AND ts >= ?", (ts,)).fetchall()
+        total = 0.0
+        for (data,) in rows:
+            try:
+                total += float(json.loads(data or "{}").get("usd") or 0)
+            except (ValueError, TypeError):
+                continue
+        return total
+
     def delete_case(self, case_id: str) -> None:
         with self._lock, self.db:
             for t in ("cases", "runs", "claims", "evidence", "attacks", "responses", "rulings", "ranges", "events"):

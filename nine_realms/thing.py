@@ -72,7 +72,8 @@ class Thing:
         if case.rulings and not case.briefing_md:
             self._brief(case)
         self._reflect(case)
-        self.bus.emit("case_finished", case_id=case.case_id, status=case.status, reasons=case.status_reasons)
+        self.bus.emit("case_finished", case_id=case.case_id, status=case.status, reasons=case.status_reasons,
+                      llm_calls=self.budget.llm_calls, tokens=self.budget.tokens, usd=round(self.budget.usd, 4))
         self._notify(case)
         return case
 
