@@ -127,16 +127,22 @@ def make_llm(provider: str):
 
     if provider == "anthropic":
         return AnthropicClient(model=os.environ.get("ANTHROPIC_MODEL"), max_tokens=8192)
+    if provider == "deepseek":  # OpenAI-compatible chat completions
+        return OpenAICompatClient(os.environ["DEEPSEEK_API_KEY"], os.environ.get("DEEPSEEK_MODEL", "deepseek-chat"),
+                                  base_url=os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1"),
+                                  max_tokens=4096)
     return OpenAICompatClient(os.environ["GROQ_API_KEY"], os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b"), max_tokens=2500)
 
 
+PROVIDER_KEYS = {"deepseek": "DEEPSEEK_API_KEY", "anthropic": "ANTHROPIC_API_KEY", "groq": "GROQ_API_KEY"}
+
+
 def detect_provider() -> str:
+    """NINE_REALMS_PROVIDER forces one; otherwise the first provider (in PROVIDER_KEYS order) with a key."""
     forced = os.environ.get("NINE_REALMS_PROVIDER", "")
-    if forced in ("anthropic", "groq"):
-        return forced if os.environ.get("ANTHROPIC_API_KEY" if forced == "anthropic" else "GROQ_API_KEY") else ""
-    if os.environ.get("ANTHROPIC_API_KEY"):
-        return "anthropic"
-    return "groq" if os.environ.get("GROQ_API_KEY") else ""
+    if forced in PROVIDER_KEYS:
+        return forced if os.environ.get(PROVIDER_KEYS[forced]) else ""
+    return next((p for p, key in PROVIDER_KEYS.items() if os.environ.get(key)), "")
 
 
 class App:
@@ -172,7 +178,7 @@ class App:
         try:
             bus = EventBus(sink=lambda ev: self.store.add_event(case_id, ev))
             base: dict[str, Any] = {"max_llm_calls": self.cfg.max_llm_calls, "max_tokens": self.cfg.max_case_tokens}
-            if self.provider != "anthropic":
+            if self.provider not in ("anthropic", "deepseek"):  # Anthropic and DeepSeek have large contexts
                 base |= {"max_tool_result_chars": 3500, "max_context_chars": 13000}  # fit small per-minute token budgets
             thing = Thing(make_llm(self.provider), self.corpus, limits=Limits(**base, **options), bus=bus, memory_dir=self.cfg.memory_dir,
                           on_update=lambda c: self.store.save_case(c.to_dict(), self.provider))
@@ -329,7 +335,7 @@ def make_handler(app: App):
                 if not DATE.match(as_of):
                     return self._json(400, {"error": "as_of must be YYYY-MM-DD"})
                 if not app.provider:
-                    return self._json(503, {"error": "No LLM key is configured on the server. Set ANTHROPIC_API_KEY (or GROQ_API_KEY) and restart."})
+                    return self._json(503, {"error": "No LLM key is configured on the server. Set DEEPSEEK_API_KEY, ANTHROPIC_API_KEY or GROQ_API_KEY and restart."})
                 ok, why, retry = app.allow_trial(self._client())
                 if not ok:
                     return self._json(429, {"error": why}, {"Retry-After": str(retry)})
@@ -385,7 +391,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"loaded from .env: {', '.join(loaded)}")
     app = build_app(cfg)
     print(f"corpus: {app.corpus.stats()}\nstore:  {app.store.counts()}")
-    print(f"live trials: {'enabled via ' + app.provider if app.provider else 'DISABLED (no ANTHROPIC_API_KEY / GROQ_API_KEY in the environment)'}")
+    print(f"live trials: {'enabled via ' + app.provider if app.provider else 'DISABLED (no DEEPSEEK_API_KEY / ANTHROPIC_API_KEY / GROQ_API_KEY in the environment)'}")
     print(f"auth: {'access token required' if cfg.token else 'OFF (loopback only)'} · limits: {cfg.max_trials_per_day} trials/day, "
           f"{cfg.cooldown_s}s cooldown · mode: {'production' if cfg.production else 'development'}")
     httpd = ThreadingHTTPServer((cfg.host, cfg.port), make_handler(app))

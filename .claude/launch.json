@@ -2,6 +2,13 @@
   "version": "0.0.1",
   "configurations": [
     {
+      "name": "nine-realms",
+      "runtimeExecutable": "backend/.venv/Scripts/python.exe",
+      "runtimeArgs": ["-m", "nine_realms.server", "--host", "127.0.0.1", "--port", "8765", "--pack", "data/runemark"],
+      "env": { "NINE_REALMS_EMBEDDER": "hash", "PYTHONUNBUFFERED": "1" },
+      "port": 8765
+    },
+    {
       "name": "backend",
       "runtimeExecutable": "backend/.venv/Scripts/python.exe",
       "runtimeArgs": ["-m", "uvicorn", "app.main:app", "--app-dir", "backend", "--host", "127.0.0.1", "--port", "8000"],
