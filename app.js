@@ -1023,23 +1023,44 @@ function answerMarkup(run) {
   const trap = (f) => `<li><button class="chip-btn" data-action="open-doc" data-doc="${escapeHtml(f.doc_id)}">${escapeHtml(f.doc_id)}</button><span class="trap-type">${escapeHtml(String(f.type).replace(/_/g, " "))}</span><span>${escapeHtml(f.note)}</span></li>`;
   const provisional = run.status !== "COMPLETE"
     ? `<p class="answer-flag"><b>Provisional.</b> ${escapeHtml(friendlyReason(run.status_reasons))} The ranges come from the rulings that were made.</p>` : "";
+  const disputed = findingsSection(run, "Disputed", "Credible sources disagree. Not settled.", run.briefing?.contested, false);
+  const ruledOut = findingsSection(run, "Ruled out", "Claims a side conceded, or Odin rejected.", run.briefing?.conceded, false);
+  const jumps = [["ranges", "Ranges"], summary && ["summary", summary[0]], ["evidence", "Evidence"], flags.length && ["traps", "Traps caught"],
+    disputed && ["disputed", "Disputed"], ruledOut && ["ruled", "Ruled out"]].filter(Boolean);
+  const sources = new Set(Object.values(run.claims || {}).flatMap((c) => c.evidence.map((e) => e.doc_id))).size;
+  // Actions live in a sticky sidebar beside the answer on wide screens, and below it on phones.
+  const side = `<aside class="answer-side" aria-label="Answer actions">
+      <div class="side-card">
+        <button class="button button-primary side-btn" data-action="download-report">Download PDF report</button>
+        <a class="button side-btn side-secondary" href="#council" data-page="council">See the full debate</a>
+        <button class="button side-btn side-secondary" data-action="ask-again">Ask another question</button>
+      </div>
+      <nav class="side-card side-nav" aria-label="On this answer"><span class="side-label">On this answer</span>${jumps.map(([id, label]) => `<a href="#" data-jump="${id}">${escapeHtml(label)}</a>`).join("")}</nav>
+      <dl class="side-card side-facts"><span class="side-label">Case</span>
+        <div><dt>Status</dt><dd>${escapeHtml((STATUS[run.status] || [0, run.status])[1])}</dd></div>
+        <div><dt>As of</dt><dd>${escapeHtml(fmtDate(run.as_of))}</dd></div>
+        <div><dt>Trial runs</dt><dd>${(run.runs || []).length}</dd></div>
+        <div><dt>Sources cited</dt><dd>${sources}</dd></div>
+        <div><dt>Case ID</dt><dd>${escapeHtml(run.case_id)}</dd></div>
+      </dl>
+    </aside>`;
   return `${head}
+    <div class="answer-grid">
+    <div class="answer-main">
     ${verdict(rows)}
     ${rigorStats(run)}
     ${provisional}
-    <ul class="ans-rows">${rows.length ? rows.map(answerRow).join("") : '<li class="ans-row rating-none"><span class="ans-sides">No ranges were ruled.</span></li>'}</ul>
-    ${summary ? `<div class="answer-block"><h2>${summary[0]}</h2><p>${escapeHtml(summary[1])}</p></div>` : ""}
-    <div class="answer-block"><h2>Why: the evidence <em>${findings.length}</em></h2><p class="hint">Findings that survived cross-examination. Click a source to see the exact passage.</p>
+    <ul class="ans-rows" id="j-ranges">${rows.length ? rows.map(answerRow).join("") : '<li class="ans-row rating-none"><span class="ans-sides">No ranges were ruled.</span></li>'}</ul>
+    ${summary ? `<div class="answer-block" id="j-summary"><h2>${summary[0]}</h2><p>${escapeHtml(summary[1])}</p></div>` : ""}
+    <div class="answer-block" id="j-evidence"><h2>Why: the evidence <em>${findings.length}</em></h2><p class="hint">Findings that survived cross-examination. Click a source to see the exact passage.</p>
       ${findings.length ? findings.map((f) => `<div class="finding">${escapeHtml(f.text)}<div class="cites">${sourceChips(run, f.claim_ids)}</div></div>`).join("") : '<p class="hint">Nothing was established yet.</p>'}</div>
-    ${flags.length ? `<div class="answer-block"><h2>Traps caught <em>${flags.length}</em></h2><p class="hint">Sources the system flagged and did not rely on as written.</p>
+    ${flags.length ? `<div class="answer-block" id="j-traps"><h2>Traps caught <em>${flags.length}</em></h2><p class="hint">Sources the system flagged and did not rely on as written.</p>
       <ul class="trap-list">${flags.slice(0, 5).map(trap).join("")}</ul>
       ${flags.length > 5 ? `<details class="more-traps"><summary>Show all ${flags.length}</summary><ul class="trap-list">${flags.slice(5).map(trap).join("")}</ul></details>` : ""}</div>` : ""}
-    ${findingsSection(run, "Disputed", "Credible sources disagree. Not settled.", run.briefing?.contested, false)}
-    ${findingsSection(run, "Ruled out", "Claims a side conceded, or Odin rejected.", run.briefing?.conceded, false)}
-    <div class="answer-actions">
-      <button class="button button-primary" data-action="download-report">Download PDF report</button>
-      <a class="button button-quiet" href="#council" data-page="council">See the full debate</a>
-      <button class="button button-quiet" data-action="ask-again">Ask another question</button>
+    ${disputed ? `<div id="j-disputed">${disputed}</div>` : ""}
+    ${ruledOut ? `<div id="j-ruled">${ruledOut}</div>` : ""}
+    </div>
+    ${side}
     </div>`;
 }
 
