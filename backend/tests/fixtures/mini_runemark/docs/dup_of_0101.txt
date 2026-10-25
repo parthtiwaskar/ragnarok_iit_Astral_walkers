@@ -1,0 +1,15 @@
+Doc ID: RM-DOC-0193
+Title: Northern channel closed (copy)
+Outlet: Serpent Canal Authority
+Publication Date: 2025-03-02
+Source Type: official_notice
+Event ID: EVT-A
+Country: Asvald; Brenmark; Gravia
+Sector: electronics; automotive
+Reliability Tier: 1
+
+NOTICE TO SHIPPING. The Serpent Canal Authority has closed the northern channel of the Serpent Canal to all commercial traffic from 2025-03-02 after the grounding of the bulk carrier Gullfaxi near kilometre 41.
+
+The southern channel is also closed while divers inspect the canal bed. No vessel may transit either channel until further notice.
+
+The closure is expected to last at least eight weeks. Salvage crews from Port Vell are on site and a further notice will follow when a reopening date is set.

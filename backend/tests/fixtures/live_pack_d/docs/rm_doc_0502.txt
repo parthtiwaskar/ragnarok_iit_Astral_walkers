@@ -1,0 +1,13 @@
+ID: RM-DOC-0502
+Title: Brenmark car plants feel the rail outage
+Source: Runewire
+Published: 2025-04-03
+Type: news_report
+Event: EVT-D
+Country: Brenmark
+Sector: automotive
+Tier: 2
+
+About 50 percent of Brenmark's automotive parts imports travel on the Ironway Rail Link, according to rail operator data.
+
+Skarline Motors said deliveries to Brenmark would be delayed.

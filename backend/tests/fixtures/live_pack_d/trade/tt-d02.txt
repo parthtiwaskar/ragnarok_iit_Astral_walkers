@@ -1,0 +1,17 @@
+Table ID: TT-D02
+Country Pair: Asvald -> Brenmark
+Sector: automotive
+Unit: thousand RMC
+Period: 2024-10 to 2025-06
+Event ID: EVT-D
+
+row | month | value | volume
+01 | 2024-10 | 300 | 60.0
+02 | 2024-11 | 301 | 60.2
+03 | 2024-12 | 299 | 59.8
+04 | 2025-01 | 302 | 60.4
+05 | 2025-02 | 300 | 60.0
+06 | 2025-03 | 298 | 59.6
+07 | 2025-04 | 305 | 61.0
+08 | 2025-05 | 301 | 60.2
+09 | 2025-06 | 300 | 60.0

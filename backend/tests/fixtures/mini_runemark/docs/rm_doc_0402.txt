@@ -1,0 +1,11 @@
+Document ID: RM-DOC-0402
+Headline: STRAIT SHUT: Eskerland chemicals cut off
+Publisher: Daily Thunder
+Date: 2025-04-01
+Doc Type: tabloid
+Event_ID: EVT-R
+Countries: Eskerland
+Sectors: chemicals
+Reliability: 4
+
+The Ravenmouth Strait has been shut, cutting Eskerland's chemical trade, sources claim.

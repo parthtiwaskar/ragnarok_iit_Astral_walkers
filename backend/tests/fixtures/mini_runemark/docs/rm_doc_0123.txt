@@ -1,0 +1,13 @@
+ID: RM-DOC-0123
+Title: Explainer: Eskerland's chemical exports
+Source: Freight & Ledger
+Published: 2025-01-10
+Type: explainer
+Event: background
+Country: Eskerland; Fjordheim
+Sector: chemicals
+Tier: 2
+
+Eskerland ships most of its chemicals through two ports, Eskhaven and a smaller terminal near Fjordvik.
+
+Fjordvik has spare quay space but limited tank storage.

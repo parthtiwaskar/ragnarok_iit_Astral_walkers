@@ -1,0 +1,9 @@
+Sheet: firms
+
+name | country | sector
+Vellcore Systems | Asvald | electronics
+Brenmark Circuitworks | Brenmark | electronics
+Skarline Motors | Corvenia | automotive
+Dunmere Grainhouse | Dalmora | grain
+Eskhaven Chemworks | Eskerland | chemicals
+Gravia Components | Gravia | electronics

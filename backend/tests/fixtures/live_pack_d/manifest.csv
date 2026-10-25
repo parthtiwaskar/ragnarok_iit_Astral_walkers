@@ -1,0 +1,7 @@
+doc_id,file,title,outlet,pub_date,tier,event_id,format,word_count
+RM-DOC-0501,docs/rm_doc_0501.pdf,Ironway Rail Link closed after derailment,Runemark Maritime Council,2025-04-02,1,EVT-D,pdf,40
+RM-DOC-0502,docs/rm_doc_0502.txt,Brenmark car plants feel the rail outage,Runewire,2025-04-03,2,EVT-D,txt,28
+RM-DOC-0503,docs/rm_doc_0503.docx,Trucks and feeders fill part of the gap,Freight & Ledger,2025-04-05,2,EVT-D,docx,17
+RM-DOC-0504,docs/rm_doc_0504.txt,rail down for months,Raven Chatter,2025-04-04,4,EVT-D,txt,12
+RM-DOC-0590,docs/pack_empty.txt,Empty wire,Runewire,2025-04-04,2,EVT-D,txt,50
+RM-DOC-0591,docs/pack_garbage.docx,Broken docx,Freight & Ledger,2025-04-05,2,EVT-D,docx,60

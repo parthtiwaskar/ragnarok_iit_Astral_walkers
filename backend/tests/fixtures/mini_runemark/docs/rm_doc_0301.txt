@@ -1,0 +1,11 @@
+Document ID: RM-DOC-0301
+Headline: Corvenia suspends grain exports
+Publisher: Runemark Maritime Council
+Date: 2025-02-10
+Doc Type: official_notice
+Event_ID: EVT-C
+Countries: Corvenia
+Sectors: grain
+Reliability: 1
+
+Corvenia has suspended exports of milling grain from 2025-02-10 for sixty days to protect domestic supply.

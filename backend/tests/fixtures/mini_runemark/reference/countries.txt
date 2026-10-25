@@ -1,0 +1,15 @@
+Sheet: countries
+
+name | code | main_port
+Asvald | ASV | Port Vell
+Brenmark | BRN | Harrowgate
+Corvenia | COR | Skarport
+Dalmora | DAL | Dunmere
+Eskerland | ESK | Eskhaven
+Fjordheim | FJO | Fjordvik
+Gravia | GRA | Gravport
+Hollin | HOL | Hollmouth
+Isvar | ISV | Isvik
+Jarnholt | JAR | Jarnhaven
+Kelmora | KEL | Kelquay
+Lysgard | LYS | Lysport

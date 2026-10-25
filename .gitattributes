@@ -1,0 +1,5 @@
+# keep fixture bytes exactly as generated (damaged files, latin-1 text, PDFs, DOCX)
+backend/tests/fixtures/** -text
+*.pdf binary
+*.docx binary
+*.png binary

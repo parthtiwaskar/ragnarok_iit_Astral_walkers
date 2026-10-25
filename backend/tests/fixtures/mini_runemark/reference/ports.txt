@@ -1,0 +1,15 @@
+Sheet: ports
+
+name | country
+Port Vell | Asvald
+Harrowgate | Brenmark
+Skarport | Corvenia
+Dunmere | Dalmora
+Eskhaven | Eskerland
+Fjordvik | Fjordheim
+Gravport | Gravia
+Hollmouth | Hollin
+Isvik | Isvar
+Jarnhaven | Jarnholt
+Kelquay | Kelmora
+Lysport | Lysgard
