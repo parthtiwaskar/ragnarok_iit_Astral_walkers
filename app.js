@@ -1,15 +1,14 @@
-const corpusPaths = [
-  "./data/runemark/manifest.json",
-  "./03_Ragnarok%20Trial%20of%20the%20Nine%20Realms/dev_pack_E5/manifest.json",
-];
+// Ragnarisk dashboard. Every page reads from the local API (/api/*), which is backed by one SQLite database.
 const content = document.querySelector("#page-content");
 const overviewMarkup = content.innerHTML;
 const breadcrumb = document.querySelector("#breadcrumb-current");
 const modal = document.querySelector("#modal-backdrop");
 const toast = document.querySelector("#toast");
+const sheet = document.querySelector("#doc-sheet");
 let toastTimeout;
-let documents = [];
 let activeQuestion = sessionStorage.getItem("ragnarisk-active-question") || document.querySelector("#investigation-query").value;
+
+const state = { caseId: sessionStorage.getItem("ragnarisk-case") || "", cases: [], running: null, canRun: false, live: [], lastSeq: -1, timer: null, feed: [], feedTimer: null, run: null };
 
 const pageTitles = {
   overview: "Overview",
@@ -19,20 +18,57 @@ const pageTitles = {
   briefing: "Executive briefing",
 };
 
+// ---- helpers ----------------------------------------------------------------------
 function showToast(message) {
   toast.textContent = message;
   toast.classList.add("show");
   clearTimeout(toastTimeout);
-  toastTimeout = setTimeout(() => toast.classList.remove("show"), 3200);
+  toastTimeout = setTimeout(() => toast.classList.remove("show"), 3600);
 }
 
+function escapeHtml(value) {
+  return String(value ?? "").replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]);
+}
+
+async function api(path, options = {}) {
+  const response = await fetch(`/api${path}`, { cache: "no-store", headers: { "Content-Type": "application/json" }, ...options });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const error = new Error(body.error || `Request failed (${response.status}).`);
+    error.status = response.status;
+    throw error;
+  }
+  return body;
+}
+
+const STATUS = { COMPLETE: ["complete", "Complete"], INCOMPLETE: ["incomplete", "Provisional"], OPEN: ["open", "Running"], REJECTED: ["rejected", "Event not verified"], ABORTED: ["rejected", "Aborted"] };
+function statusBadge(status, running) {
+  const [key, label] = running ? ["open", "Running"] : STATUS[status] || ["pending", status || "Not started"];
+  return `<span class="status-badge status-${key}"><span></span> ${escapeHtml(label)}</span>`;
+}
+const fmtDate = (iso) => (iso ? new Date(iso + "T00:00:00Z").toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric", timeZone: "UTC" }) : "—");
+const fmtStamp = (seconds) => (seconds ? new Date(seconds * 1000).toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) : "—");
+const pad2 = (n) => String(n).padStart(2, "0");
+const caseTitle = (c) => (c.question || "").replace(/^As of [^,]+,\s*/i, "").replace(/^how exposed are /i, "Exposure of ").slice(0, 70);
+
+async function refreshCases() {
+  const data = await api("/cases");
+  state.cases = data.cases;
+  state.running = data.running;
+  if (!state.caseId || !state.cases.some((c) => c.case_id === state.caseId)) state.caseId = state.cases[0]?.case_id || "";
+  return state.cases;
+}
+
+async function loadCase(id, force = false) {
+  if (!force && state.run?.id === id) return state.run;
+  const data = await api(`/cases/${encodeURIComponent(id)}`);
+  state.run = { id, case: data };
+  return state.run;
+}
+
+// ---- navigation -------------------------------------------------------------------
 function navigate(page) {
   if (!pageTitles[page]) return;
-  if (page === "overview") {
-    window.location.hash = "overview";
-    if (breadcrumb.textContent === "Overview") renderPage(page);
-    return;
-  }
   window.location.hash = page;
   renderPage(page);
 }
@@ -40,164 +76,429 @@ function navigate(page) {
 function renderPage(page) {
   if (!Object.hasOwn(pageTitles, page)) return;
   breadcrumb.textContent = pageTitles[page];
-  document.querySelectorAll(".nav-link[data-page]").forEach((link) => {
-    link.classList.toggle("active", link.dataset.page === page);
-  });
+  document.querySelectorAll(".nav-link[data-page]").forEach((link) => link.classList.toggle("active", link.dataset.page === page));
   if (page === "overview") {
     content.innerHTML = overviewMarkup;
     const query = document.querySelector("#investigation-query");
     if (query) query.value = activeQuestion;
+    hydrateOverview();
     return;
   }
-  const pages = {
-    investigations: renderInvestigations,
-    evidence: renderEvidence,
-    council: renderCouncil,
-    briefing: renderBriefing,
-  };
-  pages[page]();
+  ({ investigations: renderInvestigations, evidence: renderEvidence, council: renderCouncil, briefing: renderBriefing })[page]();
 }
 
-function renderInvestigations() {
+const refreshCurrent = () => renderPage(window.location.hash.slice(1) || "overview");
+
+// ---- overview ---------------------------------------------------------------------
+async function hydrateOverview() {
+  try {
+    const [summary] = await Promise.all([api("/summary"), refreshCases()]);
+    state.canRun = summary.can_run;
+    const latest = state.cases.find((c) => c.case_id === state.caseId) || state.cases[0];
+    const set = (id, html) => { const el = document.querySelector(id); if (el) el.innerHTML = html; };
+    const corpus = summary.corpus;
+    set("#m-cases", `${pad2(state.cases.length)} <span class="metric-trend">in workspace</span>`);
+    set("#m-cases-foot", latest ? escapeHtml(caseTitle(latest)) : "No investigation yet");
+    document.querySelector("#m-cases-bar")?.style.setProperty("width", state.cases.length ? "100%" : "0%");
+    set("#document-count", `${corpus.documents} <span class="metric-trend">documents</span>`);
+    set("#m-docs-foot", `${corpus.trade_rows_ok} trade rows · ${corpus.quarantined} quarantined · ${corpus.duplicates} duplicates`);
+    const runs = latest?.runs ?? 0;
+    set("#m-runs", `${runs} <span class="metric-trend">/ 2 minimum</span>`);
+    set("#m-runs-foot", latest ? (summary.running === latest.case_id ? "Trial running now" : STATUS[latest.status]?.[1] || latest.status) : "Awaiting first trial");
+    document.querySelector("#m-runs-bar")?.style.setProperty("width", `${Math.min(runs / 2, 1) * 100}%`);
+    set("#m-claims", `${latest?.rulings ?? "—"} <span class="metric-trend">claims ruled</span>`);
+    set("#m-claims-foot", latest ? `${latest.claims} claims submitted` : "Odin's review pending");
+    document.querySelector("#m-claims-bar")?.style.setProperty("width", latest?.claims ? `${(latest.rulings / latest.claims) * 100}%` : "0%");
+    if (latest) {
+      const detail = (await loadCase(latest.case_id)).case;
+      const stages = [detail.verified !== null, detail.pool.length > 0, Object.keys(detail.claims).length > 0, Object.keys(detail.rulings).length > 0, !!detail.briefing?.executive_summary && !/fallback/i.test(detail.briefing.title || "")];
+      const states = document.querySelectorAll(".workflow-step .step-state");
+      document.querySelectorAll(".workflow-step").forEach((step, i) => {
+        step.classList.toggle("active", !stages[i] && stages.slice(0, i).every(Boolean));
+        if (states[i]) states[i].textContent = stages[i] ? "DONE" : "PENDING";
+      });
+      set("#pipeline-pill", `<span class="status-dot cyan-dot"></span> ${summary.running === latest.case_id ? "TRIAL RUNNING" : (STATUS[latest.status]?.[1] || latest.status).toUpperCase()}`);
+      set("#workflow-note-text", detail.status === "COMPLETE" ? "The trial is complete. Odin judged the evidence sufficient." : escapeHtml(friendlyReason(detail.status_reasons)));
+      set("#case-title", escapeHtml(detail.event_summary && detail.event_summary.length <= 60 ? detail.event_summary : caseTitle(latest)));
+      set("#case-code", escapeHtml(detail.event_id || "—"));
+      set("#case-status", statusBadge(latest.status, summary.running === latest.case_id));
+      set("#case-asof", `AS OF ${fmtDate(latest.as_of).toUpperCase()}`);
+      set("#case-question", escapeHtml(latest.question));
+    }
+    set("#recent-count", pad2(state.cases.length));
+    document.querySelectorAll(".nav-count").forEach((el) => { el.textContent = pad2(state.cases.length); });
+    set("#recent-rows", state.cases.length ? state.cases.slice(0, 5).map(caseRow).join("") : '<tr><td colspan="5" class="loading-row">No investigations yet. Ask a question above.</td></tr>');
+    set("#recent-foot", `Showing <strong>${Math.min(state.cases.length, 5)}</strong> of ${state.cases.length} investigations`);
+    loadFeed();
+  } catch (error) {
+    const el = document.querySelector("#workflow-note-text");
+    if (el) el.textContent = `Could not reach the server (${error.message}). Start it with: python -m nine_realms.server`;
+  }
+}
+
+function caseRow(c) {
+  const focus = [...new Set((c.scope || []).map(([country]) => country))].map((x) => `<span class="focus-tag">${escapeHtml(x)}</span>`).join("");
+  const sectors = [...new Set((c.scope || []).map(([, sector]) => sector))].join(" · ");
+  return `<tr><td><div class="table-case-title"><span class="table-case-icon">↗</span><span><strong>${escapeHtml(caseTitle(c))}</strong><small>${escapeHtml(c.event_id || "—")} · ${c.runs} run${c.runs === 1 ? "" : "s"} · ${c.claims} claims</small></span></div></td><td>${focus}<small class="focus-detail">${escapeHtml(sectors)}</small></td><td>${statusBadge(c.status, state.running === c.case_id)}</td><td class="date-cell">${fmtStamp(c.updated_at)}</td><td><button class="row-arrow" data-action="open-case-id" data-case="${escapeHtml(c.case_id)}" aria-label="Open investigation">↗</button></td></tr>`;
+}
+
+function friendlyReason(reasons = []) {
+  const text = reasons.join(" ");
+  if (/usage limit|rate limit|max_tokens|max_llm_calls|case_timeout/i.test(text)) return "A usage or time limit was reached before the second trial run finished.";
+  if (/unchallenged/i.test(text)) return "One side went unchallenged.";
+  if (/new evidence/i.test(text)) return "A second run could not find new evidence.";
+  return text ? text.replace(/\{.*$/s, "").slice(0, 140).trim() : "Some steps did not finish.";
+}
+
+// ---- live feed --------------------------------------------------------------------
+async function loadFeed() {
+  try {
+    state.feed = (await api("/feed?limit=8")).items;
+    renderFeed(state.feed.length);
+  } catch { /* feed is optional */ }
+}
+
+function renderFeed(count) {
+  const list = document.querySelector("#feed-list");
+  if (!list) return;
+  list.innerHTML = state.feed.slice(0, count).reverse().map((item) => `<li class="feed-item"><span class="feed-date">${escapeHtml(item.date)}<br>${escapeHtml(item.time || "")}</span><span><strong>${escapeHtml(item.headline)}</strong><small>${escapeHtml(item.outlet)} · Tier ${item.tier} · ${escapeHtml(item.country)} · ${escapeHtml(item.sector)}${item.flags.includes("RETRACTED") ? " · RETRACTED" : ""}</small></span><button class="row-arrow" data-action="open-doc" data-doc="${escapeHtml(item.doc_id)}" aria-label="Open ${escapeHtml(item.doc_id)}">↗</button></li>`).join("") || '<li class="feed-empty">No items.</li>';
+}
+
+function replayFeed() {
+  clearInterval(state.feedTimer);
+  let shown = 0;
+  renderFeed(0);
+  state.feedTimer = setInterval(() => {
+    renderFeed(++shown);
+    if (shown >= state.feed.length) clearInterval(state.feedTimer);
+  }, 650);
+}
+
+// ---- investigations ---------------------------------------------------------------
+async function renderInvestigations() {
   content.innerHTML = `
     <section class="page-heading">
-      <div><div class="eyebrow"><span class="live-dot"></span> WORKSPACE <span class="eyebrow-divider">/</span> CASE REGISTER</div><h1>Investigations</h1><p class="page-subtitle">Track disruption cases, trial runs, and adjudicated findings.</p></div>
-      <div class="heading-actions"><span class="asof-pill"><span class="calendar-icon">▦</span> 01 CASE IN WORKSPACE</span><button class="button button-primary" data-action="new-investigation">＋ New investigation</button></div>
+      <div><div class="eyebrow"><span class="live-dot"></span> WORKSPACE <span class="eyebrow-divider">/</span> CASE REGISTER</div><h1>Investigations</h1><p class="page-subtitle">Every trial is saved with its claims, rulings and event log.</p></div>
+      <div class="heading-actions"><button class="button button-primary" data-action="new-investigation">＋ New investigation</button></div>
     </section>
     <section class="panel register-panel">
-      <div class="register-toolbar"><label class="register-search"><span>⌕</span><input id="case-search" type="search" placeholder="Filter investigations..." aria-label="Filter investigations"></label><span class="outline-pill">ALL CASES <strong>01</strong></span></div>
-      <div class="table-scroll"><table class="investigations-table"><thead><tr><th>CASE ID &amp; INVESTIGATION</th><th>COUNTRIES</th><th>TRADE FLOWS</th><th>TRIALS</th><th>STATUS</th><th>AS-OF DATE</th><th></th></tr></thead><tbody id="case-rows">
-        <tr data-case-row><td><div class="table-case-title"><span class="table-case-icon">↗</span><span><strong>Orvan grain corridor collapse</strong><small>E5 · Supply-chain disruption</small></span></div></td><td>Midgard · Tolan</td><td><span class="focus-tag">Wheat</span><span class="focus-tag">Maize</span></td><td class="date-cell">0 / 2 minimum</td><td><span class="status-badge status-pending"><span></span> Not started</span></td><td class="date-cell">25 Jan 2027</td><td><button class="row-arrow" data-action="open-case" aria-label="Open Orvan grain corridor investigation">↗</button></td></tr>
-      </tbody></table></div>
-      <div class="table-footer"><span>1 investigation · 76 documents in the E5 corpus</span><span>AS-OF DATE LOCKED · 25 JAN 2027</span></div>
-    </section>
-    <section class="register-note panel"><span class="note-icon">i</span><div><strong>Findings are not available yet.</strong><p>This workspace contains the E5 question and source corpus. Run the investigation to retrieve evidence and begin the adversarial trial.</p></div><button class="button button-primary" data-action="new-investigation">Start investigation <span>→</span></button></section>`;
+      <div class="table-scroll"><table class="investigations-table"><thead><tr><th>INVESTIGATION</th><th>COUNTRIES</th><th>STATUS</th><th>UPDATED</th><th></th></tr></thead><tbody id="case-rows"><tr><td colspan="5" class="loading-row">Loading…</td></tr></tbody></table></div>
+      <div class="table-footer" id="case-foot"><span>Loading…</span></div>
+    </section>`;
+  try {
+    await refreshCases();
+    document.querySelector("#case-rows").innerHTML = state.cases.length ? state.cases.map(caseRow).join("") : '<tr><td colspan="5" class="loading-row">No investigations yet.</td></tr>';
+    document.querySelector("#case-foot").innerHTML = `<span>${state.cases.length} investigation${state.cases.length === 1 ? "" : "s"}</span><span>Stored in the local database</span>`;
+  } catch (error) {
+    document.querySelector("#case-rows").innerHTML = `<tr><td colspan="5" class="loading-row error-row">${escapeHtml(error.message)}</td></tr>`;
+  }
 }
 
+// ---- evidence explorer ------------------------------------------------------------
+let docTimer;
 function renderEvidence() {
   content.innerHTML = `
     <section class="page-heading">
-      <div><div class="eyebrow"><span class="live-dot"></span> INTELLIGENCE <span class="eyebrow-divider">/</span> SOURCE REGISTER</div><h1>Evidence explorer</h1><p class="page-subtitle">Browse the E5 source manifest. Corpus records are not findings until reviewed in trial.</p></div>
-      <div class="heading-actions"><span class="asof-pill"><span class="calendar-icon">▤</span> <strong id="evidence-count">${documents.length || 76}</strong> MANIFEST RECORDS</span></div>
+      <div><div class="eyebrow"><span class="live-dot"></span> INTELLIGENCE <span class="eyebrow-divider">/</span> SOURCE REGISTER</div><h1>Evidence explorer</h1><p class="page-subtitle">Search the ingested corpus. Flags show retractions, duplicates and repaired files.</p></div>
+      <div class="heading-actions"><span class="asof-pill"><span class="calendar-icon">▤</span> <strong id="evidence-count">—</strong> RECORDS</span></div>
     </section>
     <section class="panel evidence-panel">
-      <div class="evidence-toolbar"><label class="register-search"><span>⌕</span><input id="evidence-search" type="search" placeholder="Search ID, title, source, country, or sector..." aria-label="Search corpus records"></label><select id="source-filter" aria-label="Filter by source group"><option value="">All source groups</option><option value="ATL">ATL · Runemark Atlas</option><option value="ORV">ORV · Regional notices</option><option value="WLD">WLD · General newswire</option></select><span class="integrity-pill"><span class="status-dot green-dot"></span> MANIFEST SHA-256</span></div>
-      <div class="table-scroll"><table class="investigations-table evidence-table"><thead><tr><th>DOCUMENT ID</th><th>TITLE</th><th>SOURCE</th><th>COUNTRY</th><th>SECTOR</th><th>RELIABILITY</th><th>PUBLICATION DATE</th></tr></thead><tbody id="evidence-rows"><tr><td colspan="7" class="loading-row">Loading source manifest…</td></tr></tbody></table></div>
-      <div class="table-footer"><span id="evidence-result-count">Loading source records…</span><span>AS-OF DATE · 25 JAN 2027</span></div>
-    </section>
-    <section class="source-hygiene panel"><span class="hygiene-icon">◇</span><div><strong>Source hygiene is part of the trial.</strong><p>Outlet reliability, retractions, decoys, and publication dates must be checked before claims are admitted as established evidence.</p></div><button data-page="council">See review process <span>→</span></button></section>`;
-  loadManifest();
+      <div class="evidence-toolbar"><label class="register-search"><span>⌕</span><input id="evidence-search" type="search" placeholder="Full-text search (e.g. rail Ravik wheat)…" aria-label="Search corpus"></label>
+        <select id="source-filter" aria-label="Source group"><option value="">All groups</option><option value="ATL">ATL · Atlas</option><option value="ORV">ORV · Regional</option><option value="WLD">WLD · Newswire</option></select>
+        <select id="tier-filter" aria-label="Reliability tier"><option value="">All tiers</option><option value="1">Tier 1</option><option value="2">Tier 2</option><option value="3">Tier 3</option><option value="4">Tier 4</option></select>
+        <select id="country-filter" aria-label="Country"><option value="">All countries</option></select></div>
+      <div class="table-scroll"><table class="investigations-table evidence-table"><thead><tr><th>DOCUMENT ID</th><th>TITLE</th><th>SOURCE</th><th>COUNTRY</th><th>SECTOR</th><th>TIER</th><th>DATE</th></tr></thead><tbody id="evidence-rows"><tr><td colspan="7" class="loading-row">Loading…</td></tr></tbody></table></div>
+      <div class="table-footer"><span id="evidence-result-count">Loading…</span><span>Click a row to read the source</span></div>
+    </section>`;
+  loadDocs(true);
 }
 
-async function loadManifest() {
-  let lastError;
+async function loadDocs(first = false) {
+  const value = (id) => document.querySelector(id)?.value ?? "";
+  const params = new URLSearchParams({ limit: "100" });
+  [["text", "#evidence-search"], ["prefix", "#source-filter"], ["tier", "#tier-filter"], ["country", "#country-filter"]].forEach(([key, id]) => { if (value(id)) params.set(key, value(id)); });
   try {
-    for (const corpusPath of corpusPaths) {
-      try {
-        const response = await fetch(corpusPath);
-        if (!response.ok) throw new Error(`Manifest request failed (${response.status}): ${corpusPath}`);
-        const manifest = await response.json();
-        if (!Array.isArray(manifest.documents)) throw new Error(`The source manifest has no document list: ${corpusPath}`);
-        documents = manifest.documents;
-        renderEvidenceRows(documents);
-        return;
-      } catch (error) {
-        lastError = error;
-      }
+    const data = await api(`/documents?${params}`);
+    if (first) {
+      const all = (await api("/documents?limit=500")).documents;
+      document.querySelector("#country-filter").innerHTML += [...new Set(all.map((d) => d.country).filter(Boolean))].sort().map((c) => `<option>${escapeHtml(c)}</option>`).join("");
+      document.querySelector("#evidence-count").textContent = all.length;
     }
-    throw lastError || new Error("No source manifest paths are configured.");
+    const rows = document.querySelector("#evidence-rows");
+    if (!rows) return;
+    rows.innerHTML = data.documents.length ? data.documents.map((d) => `
+      <tr class="clickable" data-action="open-doc" data-doc="${escapeHtml(d.doc_id)}">
+        <td class="document-id">${escapeHtml(d.doc_id)}</td>
+        <td><strong class="evidence-title">${escapeHtml(d.title)}</strong><small class="evidence-format">${escapeHtml(d.format)} ${d.flags.map((f) => `<span class="flag-chip">${escapeHtml(f.replace(/_/g, " ").toLowerCase())}</span>`).join("")}${d.after_as_of ? '<span class="flag-chip">after as-of</span>' : ""}</small></td>
+        <td>${escapeHtml(d.outlet)}</td><td>${escapeHtml(d.country || "—")}</td><td><span class="focus-tag">${escapeHtml(d.sector || "general")}</span></td>
+        <td><span class="reliability-tag">TIER ${d.tier}</span></td><td class="date-cell">${escapeHtml(d.date)}</td></tr>`).join("") : '<tr><td colspan="7" class="loading-row">No records match these filters.</td></tr>';
+    document.querySelector("#evidence-result-count").textContent = `${data.documents.length} of ${data.total} matching records${Object.keys(data.quarantined).length ? ` · ${Object.keys(data.quarantined).length} quarantined: ${Object.keys(data.quarantined).join(", ")}` : ""}`;
   } catch (error) {
     const rows = document.querySelector("#evidence-rows");
-    const resultCount = document.querySelector("#evidence-result-count");
-    if (rows) rows.innerHTML = `<tr><td colspan="7" class="loading-row error-row">Could not load the source manifest. ${escapeHtml(error.message)} Open this UI from a local web server to browse corpus records.</td></tr>`;
-    if (resultCount) resultCount.textContent = "Source manifest unavailable";
+    if (rows) rows.innerHTML = `<tr><td colspan="7" class="loading-row error-row">${escapeHtml(error.message)}</td></tr>`;
   }
 }
 
-function renderEvidenceRows(records) {
-  const rows = document.querySelector("#evidence-rows");
-  if (!rows) return;
-  const search = document.querySelector("#evidence-search")?.value.trim().toLowerCase() ?? "";
-  const group = document.querySelector("#source-filter")?.value ?? "";
-  const filtered = records.filter((record) => {
-    const values = [record.DOC_ID, record.TITLE, record.SOURCE_NAME, record.COUNTRY, record.SECTOR, record.SOURCE_TYPE].join(" ").toLowerCase();
-    return values.includes(search) && (!group || record.DOC_ID.startsWith(group));
-  });
-  if (!filtered.length) {
-    rows.innerHTML = '<tr><td colspan="7" class="loading-row">No source records match this filter.</td></tr>';
-  } else {
-    rows.innerHTML = filtered.slice(0, 100).map((record) => `
-      <tr>
-        <td class="document-id">${escapeHtml(record.DOC_ID)}</td>
-        <td><strong class="evidence-title">${escapeHtml(record.TITLE)}</strong><small class="evidence-format">${escapeHtml(record.FORMAT || "Document")} · ${escapeHtml(record.LANGUAGE || "en")}</small></td>
-        <td>${escapeHtml(record.SOURCE_NAME || "Not specified")}</td>
-        <td>${escapeHtml(record.COUNTRY || "—")}</td>
-        <td><span class="focus-tag">${escapeHtml(record.SECTOR || "general")}</span></td>
-        <td><span class="reliability-tag">TIER ${escapeHtml(record.RELIABILITY || "—")}</span></td>
-        <td class="date-cell">${escapeHtml(record.PUB_DATE || "—")}</td>
-      </tr>`).join("");
+// ---- source sheet (click-through) --------------------------------------------------
+async function openDoc(id, locator = "", quote = "") {
+  sheet.hidden = false;
+  document.querySelector("#sheet-title").textContent = id;
+  const body = document.querySelector("#sheet-body");
+  body.innerHTML = '<p class="brief-loading">Loading…</p>';
+  try {
+    const d = await api(`/documents/${encodeURIComponent(id)}`);
+    const anchor = (/P(\d+)/.exec(locator) || [])[1];
+    const needle = quote.replace(/\[P\d+\]\s*/g, "").toLowerCase().slice(0, 40);
+    const paras = d.paragraphs.map((p, i) => {
+      const hit = (anchor && p.startsWith(`[P${anchor}]`)) || (needle.length > 12 && p.toLowerCase().includes(needle));
+      return `<p class="para${hit ? " hit" : ""}">${escapeHtml(p)}</p>`;
+    }).join("");
+    const rows = d.trade_rows.length ? `<table class="mini-table"><thead><tr><th>ROW</th><th>PERIOD</th><th>VOLUME (t)</th><th>VALUE ($M)</th><th></th></tr></thead><tbody>${d.trade_rows.map((r) => `<tr class="${anchor && String(r.row) === anchor ? "hit" : ""}"><td>${r.row}</td><td>${r.year}-${pad2(r.month)}</td><td>${r.volume_t?.toLocaleString() ?? "—"}</td><td>${r.value_usd_m ?? "—"}</td><td>${r.quality === "ok" ? "" : escapeHtml(r.quality)}</td></tr>`).join("")}</tbody></table>` : "";
+    body.innerHTML = `<h2>${escapeHtml(d.title)}</h2><div class="sheet-meta"><span class="reliability-tag">TIER ${d.tier}</span><span>${escapeHtml(d.outlet)}</span><span>${escapeHtml(d.date)}</span><span>${escapeHtml(d.format)}</span>${d.flags.map((f) => `<span class="flag-chip">${escapeHtml(f.replace(/_/g, " ").toLowerCase())}</span>`).join("")}${d.after_as_of ? '<span class="flag-chip">after as-of</span>' : ""}</div>${d.notes ? `<p class="sheet-note">${escapeHtml(d.notes)}</p>` : ""}${paras}${rows ? `<h3>Parsed trade rows</h3>${rows}` : ""}`;
+    body.querySelector(".hit")?.scrollIntoView({ block: "center" });
+  } catch (error) {
+    body.innerHTML = `<p class="error-row">${escapeHtml(error.message)}</p>`;
   }
-  const resultCount = document.querySelector("#evidence-result-count");
-  if (resultCount) resultCount.textContent = `Showing ${Math.min(filtered.length, 100)} of ${filtered.length} matching records · ${records.length} total in E5`;
-  const count = document.querySelector("#evidence-count");
-  if (count) count.textContent = String(records.length);
 }
 
-function renderCouncil() {
-  content.innerHTML = `
-    <section class="page-heading">
-      <div><div class="eyebrow"><span class="live-dot"></span> INTELLIGENCE <span class="eyebrow-divider">/</span> ADVERSARIAL REVIEW</div><h1>Agent council</h1><p class="page-subtitle">Independent agents verify, challenge, and adjudicate each disruption case.</p></div>
-      <div class="heading-actions"><span class="asof-pill"><span class="calendar-icon">◷</span> AS OF <strong>25 JAN 2027</strong></span><span class="outline-pill"><span class="status-dot cyan-dot"></span> 4 AGENTS READY</span></div>
-    </section>
-    <section class="council-flow">
-      <article class="council-agent panel"><div class="council-agent-heading"><span class="agent-avatar heimdall">H</span><span class="agent-ready"><i></i> READY</span></div><span class="section-kicker">PHASE 01 · GATEKEEPER</span><h2>Heimdall</h2><h3>Event verification</h3><p>Checks that the disruption is real and active as of the investigation date. Filters decoys, retractions, planted instructions, and clock violations before a case is admitted.</p><div class="responsibility"><span>RESPONSIBILITY</span><strong>Establish whether the event is real.</strong></div></article>
-      <div class="council-branch"><article class="council-agent panel"><div class="council-agent-heading"><span class="agent-avatar thor">T</span><span class="agent-ready"><i></i> READY</span></div><span class="section-kicker">PHASE 02 · PROSECUTION</span><h2>Thor</h2><h3>High-exposure case</h3><p>Builds a specific, document-grounded case for higher commercial exposure, then responds to counter-evidence during cross-examination.</p><div class="responsibility"><span>POSITION</span><strong>Argue the strongest supported high case.</strong></div></article>
-        <article class="council-agent panel"><div class="council-agent-heading"><span class="agent-avatar loki">L</span><span class="agent-ready"><i></i> READY</span></div><span class="section-kicker">PHASE 02 · DEFENSE</span><h2>Loki</h2><h3>Limited-exposure case</h3><p>Challenges inflated assumptions with route alternatives, price adjustments, and source quality checks. Concedes claims when the evidence warrants it.</p><div class="responsibility"><span>POSITION</span><strong>Argue the strongest supported low case.</strong></div></article></div>
-      <article class="council-agent panel"><div class="council-agent-heading"><span class="agent-avatar odin">O</span><span class="agent-ready"><i></i> READY</span></div><span class="section-kicker">PHASE 03 · JUDICIARY</span><h2>Odin</h2><h3>Judge &amp; briefing author</h3><p>Rules on claims as Established, Contested, or Conceded; classifies facts and inferences; requests another retrieval round when evidence is insufficient.</p><div class="responsibility"><span>RESPONSIBILITY</span><strong>Author the briefing from rulings only.</strong></div></article>
-    </section>
-    <section class="panel trial-progress"><div class="section-heading"><div><span class="section-kicker">REPRODUCIBILITY REQUIREMENT</span><h2>Trial run record</h2></div><span class="outline-pill">0 / 2 RUNS COMPLETE</span></div><div class="trial-slots"><div><span class="trial-number">01</span><span><strong>Trial run one</strong><small>Pending investigation start</small></span><span class="status-badge status-pending"><span></span> Pending</span></div><div><span class="trial-number">02</span><span><strong>Trial run two</strong><small>Minimum second evidence pass</small></span><span class="status-badge status-pending"><span></span> Pending</span></div></div><button class="button button-primary" data-action="new-investigation">Start the investigation <span>→</span></button></section>`;
-}
-
-function renderBriefing() {
-  content.innerHTML = `
-    <section class="page-heading">
-      <div><div class="eyebrow"><span class="live-dot"></span> OUTPUTS <span class="eyebrow-divider">/</span> ODIN'S RULINGS</div><h1>Executive briefing</h1><p class="page-subtitle">Decision-ready intelligence, authored from adjudicated claims with traceable citations.</p></div>
-      <div class="heading-actions"><span class="asof-pill"><span class="calendar-icon">▦</span> AS OF <strong>25 JAN 2027</strong></span><button class="button button-quiet" data-action="export-briefing" disabled>Export briefing</button></div>
-    </section>
-    <section class="briefing-empty panel"><div class="empty-seal">◇</div><span class="section-kicker">E5 · ORVAN GRAIN CORRIDOR</span><h2>No adjudicated briefing yet.</h2><p>Odin's briefing will appear here after event verification, evidence retrieval, opposing arguments, cross-examination, and judicial rulings are complete.</p><div class="briefing-checklist"><span><i>01</i> Verify event</span><span><i>02</i> Retrieve sources</span><span><i>03</i> Debate both cases</span><span><i>04</i> Record rulings</span></div><button class="button button-primary" data-action="new-investigation">Begin investigation <span>→</span></button></section>
-    <section class="briefing-outline panel"><div class="section-heading"><div><span class="section-kicker">BRIEFING FORMAT</span><h2>What Odin will deliver</h2></div><span class="outline-pill">CITATION-LED</span></div><div class="briefing-parts"><article><span>01</span><div><strong>Event verification</strong><p>Event status at the as-of date, supported by verified sources.</p></div></article><article><span>02</span><div><strong>Exposure ranges</strong><p>Separate low and high wheat and maize import ranges for Midgard and Tolan: Thor, Loki, and Odin.</p></div></article><article><span>03</span><div><strong>Executive assessment</strong><p>Paragraph-level citations, material uncertainties, concessions, and a next-quarter outlook.</p></div></article></div></section>`;
-}
-
-function escapeHtml(value) {
-  return String(value).replace(/[&<>"']/g, (character) => ({
-    "&": "&amp;",
-    "<": "&lt;",
-    ">": "&gt;",
-    '"': "&quot;",
-    "'": "&#39;",
-  })[character]);
-}
-
-function openDialog() {
-  modal.hidden = false;
-  document.querySelector("#dialog-query").focus();
-}
-
-function closeDialog() {
-  modal.hidden = true;
-}
-
-function submitInvestigation(question) {
-  if (!question.trim()) {
-    showToast("Enter an investigation question to continue.");
-    return;
+// ---- agent council / trial view ---------------------------------------------------
+function describeEvent(e) {
+  const who = (e.agent || "").charAt(0) + (e.agent || "").slice(1).toLowerCase();
+  switch (e.type) {
+    case "case_started": return "Case opened. Heimdall is gathering evidence.";
+    case "case_opened": return `Heimdall ${e.verified ? "verified the event" : "could not verify the event"}.`;
+    case "tool_call": return e.tool === "search_documents" ? `${who} searched: “${e.args?.query ?? ""}”` : `${who} read ${e.args?.doc_id || e.args?.table_id || e.tool}`;
+    case "claim_submitted": return `${who} submitted a claim: ${(e.claim?.text || "").slice(0, 90)}`;
+    case "attack_made": return `${who} attacked ${e.attack?.target_claim_id}.`;
+    case "response_made": return `${who} ${e.action === "CONCEDE" ? "conceded" : "defended"} against ${e.attack_id}.`;
+    case "ruling": return `Odin ruled ${e.claim_id}: ${e.status}.`;
+    case "sufficiency": return e.sufficient ? "Odin judged the evidence sufficient." : "Odin sent the case back for more evidence.";
+    case "remand": return "Second trial run is starting.";
+    case "research_done": return `Heimdall found ${e.new_doc_ids?.length ?? 0} new document(s).`;
+    case "injection_flagged": return "A document contained an instruction aimed at the AI. It was ignored.";
+    case "case_finished": return `Trial finished: ${e.status}.`;
+    default: return "";
   }
+}
+
+const rulingPill = (status) => `<span class="rpill r-${status}">${escapeHtml(status)}</span>`;
+
+function claimCard(run, claim) {
+  const ruling = run.rulings[claim.id];
+  const status = ruling?.status || (claim.status === "conceded" ? "conceded" : "unruled");
+  const est = claim.estimate ? `<span class="claim-est">${escapeHtml(claim.estimate.country)} · ${escapeHtml(claim.estimate.sector)}: <b>${fmtRange([claim.estimate.low, claim.estimate.high])}</b></span>` : "";
+  const chips = [...new Map(claim.evidence.map((e) => [e.doc_id, e])).values()].slice(0, 4).map((e) => `<button class="chip-btn" data-action="open-doc" data-doc="${escapeHtml(e.doc_id)}" data-locator="${escapeHtml(e.locator)}" data-quote="${escapeHtml(e.quote)}">${escapeHtml(e.doc_id)}</button>`).join("");
+  return `<article class="claim"><header><span class="claim-id">${escapeHtml(claim.id)}</span><span class="badge">${escapeHtml(claim.kind)}</span>${rulingPill(status)}</header><p>${escapeHtml(claim.text)}</p>${est}<div class="cites">${chips}</div>${ruling?.rationale ? `<details class="why"><summary>Odin's reasoning</summary><p>${escapeHtml(ruling.rationale)}</p></details>` : ""}</article>`;
+}
+
+async function renderCouncil() {
+  if (!state.caseId) {
+    try { await refreshCases(); } catch { /* handled below */ }
+  }
+  if (!state.caseId) return councilEmpty();
+  content.innerHTML = '<section class="brief-loading">Loading the trial…</section>';
+  try {
+    const run = (await loadCase(state.caseId, true)).case;
+    const claims = Object.values(run.claims);
+    const col = (side) => claims.filter((c) => c.side === side).map((c) => claimCard(run, c)).join("") || '<p class="rating-note">No claims from this side.</p>';
+    const running = state.running === state.caseId;
+    const live = state.live.slice(-8).map((t) => `<li>${escapeHtml(t)}</li>`).join("");
+    const attacks = Object.values(run.attacks).map((a) => {
+      const r = run.responses[a.id];
+      const target = run.claims[a.target_claim_id];
+      return `<div class="xexam"><div><span class="who who-${a.by.toLowerCase()}">${escapeHtml(a.by)}</span> attacked <b>${escapeHtml(a.target_claim_id)}</b> <span class="badge">${escapeHtml(a.kind)}</span><p>${escapeHtml(a.text)}</p></div><div>${r ? `<span class="rpill r-${r.action === "CONCEDE" ? "conceded" : "established"}">${r.action === "CONCEDE" ? "conceded" : "defended"}</span><p>${escapeHtml(r.text)}${r.note ? ` <i>(${escapeHtml(r.note)})</i>` : ""}</p>` : '<span class="rpill r-unruled">unanswered</span>'}${target ? "" : ""}</div></div>`;
+    }).join("");
+    const flags = (run.red_flags || []).slice(0, 10).map((f) => `<span class="flag-chip" title="${escapeHtml(f.note || "")}">${escapeHtml(f.doc_id)} · ${escapeHtml(f.type)}</span>`).join("");
+    const runs = run.runs.map((r) => `<div class="run-row"><b>Run ${r.run}</b><span>${r.claims.length} claims · ${r.attacks.length} attacks · ${r.rulings.length} rulings${r.new_doc_ids.length ? ` · ${r.new_doc_ids.length} new document(s)` : ""}</span><span class="rpill r-${r.sufficient ? "established" : r.sufficient === false ? "contested" : "unruled"}">${r.sufficient ? "sufficient" : r.sufficient === false ? "sent back" : "not judged"}</span>${r.deficiencies.length ? `<ul>${r.deficiencies.map((d) => `<li>${escapeHtml(d)}</li>`).join("")}</ul>` : ""}${r.failures.length ? `<p class="rating-note">${escapeHtml(friendlyReason(r.failures))}</p>` : ""}</div>`).join("");
+    content.innerHTML = `
+      <section class="page-heading">
+        <div><div class="eyebrow"><span class="live-dot"></span> INTELLIGENCE <span class="eyebrow-divider">/</span> ADVERSARIAL REVIEW</div><h1>Agent council</h1><p class="page-subtitle">${escapeHtml(run.question)}</p></div>
+        <div class="heading-actions">${statusBadge(run.status, running)}<button class="button button-primary" data-action="new-investigation">＋ New investigation</button></div>
+      </section>
+      ${running ? `<section class="live-strip panel"><span class="live-dot"></span><ul>${live || "<li>Starting…</li>"}</ul></section>` : ""}
+      <section class="panel council-verify"><div><span class="agent-avatar heimdall">H</span><b>Heimdall</b> · ${run.verified === null ? "verifying…" : run.verified ? "event verified" : "event NOT verified"} <span class="badge">${escapeHtml(run.event_id || "—")}</span></div><p>${escapeHtml(run.verdict_reason || "")}</p><div class="cites">${flags}</div></section>
+      <section class="trial-cols"><div><h2><span class="agent-avatar thor">T</span> Thor <small>argues high exposure</small></h2>${col("THOR")}</div>
+        <div><h2><span class="agent-avatar loki">L</span> Loki <small>argues limited exposure</small></h2>${col("LOKI")}</div></section>
+      ${attacks ? `<section class="brief-section"><h2>Cross-examination <em>${Object.keys(run.attacks).length}</em></h2><p class="hint">Each side attacks the other's claims. A defence needs new evidence or it is a concession.</p>${attacks}</section>` : ""}
+      <section class="brief-section"><h2><span class="agent-avatar odin">O</span> Odin's rulings by run</h2>${runs || '<p class="rating-note">No run has finished yet.</p>'}<button class="button button-quiet" data-page="briefing" style="margin-top:12px">Open the briefing →</button></section>`;
+  } catch (error) {
+    content.innerHTML = `<section class="register-note panel"><span class="note-icon">!</span><div><strong>Could not load the trial.</strong><p>${escapeHtml(error.message)}</p></div></section>`;
+  }
+}
+
+function councilEmpty() {
+  content.innerHTML = `<section class="page-heading"><div><div class="eyebrow"><span class="live-dot"></span> INTELLIGENCE <span class="eyebrow-divider">/</span> ADVERSARIAL REVIEW</div><h1>Agent council</h1><p class="page-subtitle">Heimdall verifies, Thor and Loki argue, Odin rules.</p></div></section>
+    <section class="briefing-empty panel"><div class="empty-seal">◇</div><h2>No trial yet.</h2><p>Ask a question to open a case. Claims, cross-examination and rulings appear here.</p><button class="button button-primary" data-action="new-investigation">Start an investigation <span>→</span></button></section>`;
+}
+
+// ---- running a trial --------------------------------------------------------------
+async function submitInvestigation(question) {
+  if (!question.trim()) return showToast("Enter an investigation question to continue.");
   closeDialog();
   activeQuestion = question.trim();
   sessionStorage.setItem("ragnarisk-active-question", activeQuestion);
-  navigate("council");
-  showToast("Investigation setup is ready. Agent execution requires a connected backend.");
+  try {
+    const { case_id: id } = await api("/cases", { method: "POST", body: JSON.stringify({ question: activeQuestion }) });
+    state.caseId = id;
+    state.run = null;
+    state.live = [];
+    sessionStorage.setItem("ragnarisk-case", id);
+    showToast("Trial started. Watch it unfold here.");
+    startPolling(id);
+    navigate("council");
+  } catch (error) {
+    showToast(error.status === 409 ? "A trial is already running. Wait for it to finish." : error.message);
+  }
 }
+
+function startPolling(id) {
+  clearTimeout(state.timer);
+  state.lastSeq = -1;
+  state.running = id;
+  const tick = async () => {
+    try {
+      const data = await api(`/cases/${encodeURIComponent(id)}/events?since=${state.lastSeq}&limit=300&types=case_started,case_opened,tool_call,claim_submitted,attack_made,response_made,ruling,sufficiency,remand,research_done,injection_flagged,case_finished`);
+      if (data.events.length) {
+        state.lastSeq = data.events[data.events.length - 1].seq;
+        state.live.push(...data.events.map(describeEvent).filter(Boolean));
+        state.live = state.live.slice(-30);
+        if (["council", "briefing", "overview"].includes(window.location.hash.slice(1) || "overview")) { state.run = null; refreshCurrent(); }
+      }
+      if (!data.is_running) {
+        state.running = null;
+        state.run = null;
+        showToast(`Trial finished: ${STATUS[data.status]?.[1] || data.status}.`);
+        refreshCurrent();
+        return;
+      }
+    } catch { /* transient: keep polling */ }
+    state.timer = setTimeout(tick, 2500);
+  };
+  tick();
+}
+
+// ---- exposure rating & briefing ---------------------------------------------------
+const RATING_BANDS = [
+  { key: "low", label: "Low", max: 10 },
+  { key: "moderate", label: "Moderate", max: 30 },
+  { key: "high", label: "High", max: 55 },
+  { key: "severe", label: "Severe", max: Infinity },
+];
+const magnitude = (range) => [Math.min(Math.abs(range[0]), Math.abs(range[1])), Math.max(Math.abs(range[0]), Math.abs(range[1]))];
+const round1 = (value) => Math.round(value * 10) / 10;
+const fmtRange = (range) => { if (!range) return "—"; const [a, b] = magnitude(range); return `${round1(a)}% to ${round1(b)}%`; };
+
+function exposureRows(run) {
+  const claims = Object.values(run.claims || {});
+  const dead = (claim) => claim.status === "conceded" || ["conceded", "rejected"].includes(run.rulings?.[claim.id]?.status);
+  const hull = (side, country, sector) => {
+    const estimates = claims.filter((claim) => claim.side === side && !dead(claim) && claim.estimate?.country === country && claim.estimate?.sector === sector).map((claim) => claim.estimate);
+    return estimates.length ? [Math.min(...estimates.map((e) => e.low)), Math.max(...estimates.map((e) => e.high))] : null;
+  };
+  return (run.scope || []).map(([country, sector]) => {
+    const odin = (run.ranges || []).find((range) => range.country === country && range.sector === sector);
+    return { country, sector, thor: hull("THOR", country, sector), loki: hull("LOKI", country, sector), odin: odin && odin.low != null ? [odin.low, odin.high] : null };
+  });
+}
+
+function ratingCard(row, provisional) {
+  if (!row.odin) {
+    return `<article class="rating-card rating-none"><header><h3>${escapeHtml(row.country)} · ${escapeHtml(row.sector)}<small>Import volume</small></h3><span class="rating-pill"><i></i>No data</span></header><div class="rating-range">—</div><p class="rating-note">Odin found no usable evidence for this flow in Runemark, so no range is given rather than a guess.</p></article>`;
+  }
+  const [lo, hi] = magnitude(row.odin);
+  const band = RATING_BANDS.find((b) => (lo + hi) / 2 < b.max);
+  const width = hi - lo;
+  const widthLabel = width <= 8 ? "Narrow" : width <= 20 ? "Moderate" : "Wide";
+  const pos = (range) => { const [a, b] = magnitude(range); return `left:${Math.min(a, 100)}%;width:${Math.max(Math.min(b, 100) - Math.min(a, 100), 1)}%`; };
+  let agreement = "Only one side gave a range.";
+  if (row.thor && row.loki) {
+    const [tl, th] = magnitude(row.thor), [ll, lh] = magnitude(row.loki);
+    const gap = Math.max(tl - lh, ll - th, 0);
+    agreement = gap === 0 ? "Thor and Loki overlap." : `Thor and Loki are ${Math.round(gap)} points apart.`;
+  }
+  return `<article class="rating-card rating-${band.key}">
+    <header><h3>${escapeHtml(row.country)} · ${escapeHtml(row.sector)}<small>Expected fall in imports</small></h3><span class="rating-pill${provisional ? " provisional" : ""}" title="${provisional ? "Provisional. " : ""}Rating is based on the middle of Odin's range"><i></i>${band.label}</span></header>
+    <div class="rating-range">${fmtRange(row.odin)}</div>
+    <div><div class="gauge" aria-hidden="true"><span class="odin" style="${pos(row.odin)}"></span></div>
+      <div class="gauge-lines" aria-hidden="true">${row.thor ? `<div class="gauge-line thor"><span style="${pos(row.thor)}"></span></div>` : ""}${row.loki ? `<div class="gauge-line loki"><span style="${pos(row.loki)}"></span></div>` : ""}</div></div>
+    <div class="rating-meta"><span>Range width <b>${widthLabel}</b></span><span>${agreement}</span></div>
+    <p class="rating-note">${row.thor ? `Thor ${fmtRange(row.thor)}` : ""}${row.thor && row.loki ? " · " : ""}${row.loki ? `Loki ${fmtRange(row.loki)}` : ""}</p>
+  </article>`;
+}
+
+function citeChips(run, claimIds) {
+  const seen = new Set();
+  return claimIds.flatMap((id) => run.claims?.[id]?.evidence || []).filter((e) => !seen.has(e.doc_id + e.quote) && seen.add(e.doc_id + e.quote)).slice(0, 6).map((e) =>
+    `<details class="cite"><summary>${escapeHtml(e.doc_id)} · ${escapeHtml(e.date || "undated")}</summary><div class="pop"><q>“${escapeHtml(e.quote)}”</q><small>${escapeHtml(e.doc_id)}${e.locator ? ` · ${escapeHtml(e.locator)}` : ""} · Tier ${escapeHtml(e.tier ?? "?")} · published ${escapeHtml(e.date || "undated")}</small> <button class="chip-btn" data-action="open-doc" data-doc="${escapeHtml(e.doc_id)}" data-locator="${escapeHtml(e.locator)}" data-quote="${escapeHtml(e.quote)}">Open source →</button></div></details>`).join("");
+}
+
+function findingsSection(run, title, hint, items, open) {
+  if (!items?.length) return "";
+  const rows = items.map((item) => {
+    const basis = [...new Set(item.claim_ids.map((id) => run.rulings?.[id]?.basis).filter(Boolean))].map((b) => b.replace("_", " "));
+    return `<div class="finding">${escapeHtml(item.text)}<span class="badges">${basis.map((b) => `<span class="badge">${escapeHtml(b)}</span>`).join("")}</span><div class="cites">${citeChips(run, item.claim_ids)}</div></div>`;
+  }).join("");
+  return `<details class="brief-section" ${open ? "open" : ""}><summary style="list-style:none;cursor:pointer"><h2 style="display:inline-flex">${title} <em>${items.length}</em></h2></summary><p class="hint">${hint}</p>${rows}</details>`;
+}
+
+function renderBriefingResult(runInfo) {
+  const run = runInfo.case;
+  const brief = run.briefing || {};
+  const complete = run.status === "COMPLETE";
+  const rows = exposureRows(run);
+  const docs = [...new Set(Object.values(run.claims || {}).flatMap((claim) => claim.evidence.map((e) => e.doc_id)))].sort();
+  const scale = RATING_BANDS.map((b, i) => `<span class="rating-${b.key}"><i></i>${b.label} ${i === 0 ? "under 10%" : i === RATING_BANDS.length - 1 ? "over 55%" : `${RATING_BANDS[i - 1].max}–${b.max}%`}</span>`).join("");
+  const options = state.cases.length > 1 ? `<select id="case-select" aria-label="Choose investigation">${state.cases.map((c) => `<option value="${escapeHtml(c.case_id)}" ${c.case_id === runInfo.id ? "selected" : ""}>${escapeHtml(c.case_id)} · ${escapeHtml((STATUS[c.status] || [0, c.status])[1])}</option>`).join("")}</select>` : "";
+  content.innerHTML = `
+    <section class="page-heading">
+      <div><div class="eyebrow"><span class="live-dot"></span> OUTPUTS <span class="eyebrow-divider">/</span> ODIN'S RULINGS</div><h1>Executive briefing</h1><p class="page-subtitle">Case ${escapeHtml(runInfo.id)} · ${run.runs.length} trial run${run.runs.length === 1 ? "" : "s"}</p></div>
+      <div class="heading-actions">${options}<span class="asof-pill"><span class="calendar-icon">▦</span> AS OF <strong>${escapeHtml(fmtDate(run.as_of).toUpperCase())}</strong></span><button class="button button-quiet" data-action="export-briefing">Download .md</button></div>
+    </section>
+    <p class="brief-question">${escapeHtml(run.question)}</p>
+    <div class="brief-status ${complete ? "ok" : ""}"><span>${complete ? "✓" : "!"}</span><div><strong>${complete ? "Complete" : state.running === run.case_id ? "Running: results will fill in" : "Provisional: this analysis did not finish"}</strong><p>${complete ? "Odin judged the evidence sufficient." : escapeHtml(friendlyReason(run.status_reasons)) + " Treat the ratings below as a first pass."}</p></div></div>
+    <section class="rating-grid">${rows.length ? rows.map((row) => ratingCard(row, !complete)).join("") : '<p class="rating-note">No exposure ranges yet.</p>'}</section>
+    <div class="rating-scale" title="Rating is based on the middle of Odin's range">${scale}</div>
+    ${brief.executive_summary ? `<section class="brief-section"><h2>Summary</h2><p class="brief-question" style="margin:6px 0 0">${escapeHtml(brief.executive_summary)}</p></section>` : ""}
+    ${findingsSection(run, "Established", "Sourced facts and findings that survived cross-examination.", brief.established, true)}
+    ${findingsSection(run, "Disputed", "Credible sources disagree. Not settled.", brief.contested, false)}
+    ${findingsSection(run, "Withdrawn or rejected", "Claims a side conceded, or Odin rejected.", brief.conceded, false)}
+    ${brief.outlook ? `<section class="brief-section"><h2>Next-quarter outlook</h2><div class="outlook"><p>${escapeHtml(brief.outlook.text)}</p><ul>${(brief.outlook.assumptions || []).map((a) => `<li>${escapeHtml(a)}</li>`).join("")}</ul></div></section>` : ""}
+    <p class="sources-line">${docs.length} sources cited: ${docs.map((d) => `<button class="chip-btn" data-action="open-doc" data-doc="${escapeHtml(d)}">${escapeHtml(d)}</button>`).join(" ")}</p>`;
+}
+
+async function renderBriefing() {
+  content.innerHTML = '<section class="brief-loading">Loading briefing…</section>';
+  try {
+    await refreshCases();
+    if (!state.caseId) throw new Error("no case");
+    renderBriefingResult(await loadCase(state.caseId, true));
+  } catch {
+    briefingEmpty();
+  }
+}
+
+function briefingEmpty() {
+  content.innerHTML = `
+    <section class="page-heading">
+      <div><div class="eyebrow"><span class="live-dot"></span> OUTPUTS <span class="eyebrow-divider">/</span> ODIN'S RULINGS</div><h1>Executive briefing</h1><p class="page-subtitle">Decision-ready intelligence, authored from adjudicated claims with traceable citations.</p></div>
+    </section>
+    <section class="briefing-empty panel"><div class="empty-seal">◇</div><span class="section-kicker">NO BRIEFING YET</span><h2>No adjudicated briefing yet.</h2><p>Ask a question and Odin's briefing will appear here once the trial finishes.</p><button class="button button-primary" data-action="new-investigation">Begin investigation <span>→</span></button></section>`;
+}
+
+function downloadBriefing() {
+  const md = state.run?.case?.briefing_md;
+  if (!md) return showToast("No briefing available to download.");
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(new Blob([md], { type: "text/markdown" }));
+  link.download = `briefing-${state.run.id}.md`;
+  link.click();
+  URL.revokeObjectURL(link.href);
+}
+
+// ---- dialog & events --------------------------------------------------------------
+function openDialog() { modal.hidden = false; document.querySelector("#dialog-query").value = activeQuestion; document.querySelector("#dialog-query").focus(); }
+function closeDialog() { modal.hidden = true; }
+function closeSheet() { sheet.hidden = true; }
 
 document.addEventListener("click", (event) => {
   const target = event.target.closest("[data-page], [data-action]");
@@ -207,22 +508,18 @@ document.addEventListener("click", (event) => {
     navigate(target.dataset.page);
     return;
   }
-  switch (target.dataset.action) {
-    case "new-investigation":
-      openDialog();
-      break;
-    case "close-dialog":
-      closeDialog();
-      break;
-    case "clear-query":
-      document.querySelector("#investigation-query").value = "";
-      break;
-    case "submit-dialog":
-      submitInvestigation(document.querySelector("#dialog-query").value);
-      break;
-    case "open-case":
-      navigate("council");
-      break;
+  const d = target.dataset;
+  switch (d.action) {
+    case "new-investigation": openDialog(); break;
+    case "close-dialog": closeDialog(); break;
+    case "clear-query": document.querySelector("#investigation-query").value = ""; break;
+    case "submit-dialog": submitInvestigation(document.querySelector("#dialog-query").value); break;
+    case "open-case-id": state.caseId = d.case; sessionStorage.setItem("ragnarisk-case", d.case); state.run = null; navigate("council"); break;
+    case "open-latest": navigate("council"); break;
+    case "replay-feed": replayFeed(); break;
+    case "open-doc": openDoc(d.doc, d.locator || "", d.quote || ""); break;
+    case "close-sheet": closeSheet(); break;
+    case "export-briefing": downloadBriefing(); break;
   }
 });
 
@@ -237,22 +534,17 @@ document.addEventListener("input", (event) => {
     activeQuestion = event.target.value;
     sessionStorage.setItem("ragnarisk-active-question", activeQuestion);
   }
-  if (event.target.id === "evidence-search") renderEvidenceRows(documents);
-  if (event.target.id === "case-search") {
-    const row = document.querySelector("[data-case-row]");
-    if (row) row.hidden = !row.textContent.toLowerCase().includes(event.target.value.toLowerCase());
-  }
+  if (event.target.id === "evidence-search") { clearTimeout(docTimer); docTimer = setTimeout(() => loadDocs(), 250); }
 });
 
 document.addEventListener("change", (event) => {
-  if (event.target.id === "source-filter") renderEvidenceRows(documents);
+  if (["source-filter", "tier-filter", "country-filter"].includes(event.target.id)) loadDocs();
+  if (event.target.id === "case-select") { state.caseId = event.target.value; sessionStorage.setItem("ragnarisk-case", state.caseId); state.run = null; renderBriefing(); }
 });
 
 document.addEventListener("keydown", (event) => {
-  if (event.key === "Escape" && !modal.hidden) closeDialog();
-  if (event.key === "Enter" && event.target.id === "dialog-query" && (event.metaKey || event.ctrlKey)) {
-    submitInvestigation(event.target.value);
-  }
+  if (event.key === "Escape") { if (!modal.hidden) closeDialog(); if (!sheet.hidden) closeSheet(); }
+  if (event.key === "Enter" && event.target.id === "dialog-query" && (event.metaKey || event.ctrlKey)) submitInvestigation(event.target.value);
 });
 
 window.addEventListener("hashchange", () => {
@@ -260,5 +552,13 @@ window.addEventListener("hashchange", () => {
   if (Object.hasOwn(pageTitles, page)) renderPage(page);
 });
 
-const initialPage = window.location.hash.slice(1);
-if (Object.hasOwn(pageTitles, initialPage) && initialPage !== "overview") renderPage(initialPage);
+(async function boot() {
+  const initialPage = window.location.hash.slice(1);
+  if (Object.hasOwn(pageTitles, initialPage) && initialPage !== "overview") renderPage(initialPage);
+  else hydrateOverview();
+  try {
+    const health = await api("/health");
+    state.canRun = !!health.provider;
+    if (health.running) { state.caseId = health.running; startPolling(health.running); }
+  } catch { /* server unreachable: pages show their own errors */ }
+})();

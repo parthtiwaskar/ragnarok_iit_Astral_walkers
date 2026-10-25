@@ -112,27 +112,27 @@
           <section class="metric-grid" aria-label="Workspace metrics">
             <article class="metric-card panel">
               <div class="metric-head"><span>ACTIVE INVESTIGATIONS</span><span class="metric-icon cyan">◫</span></div>
-              <div class="metric-value">01 <span class="metric-trend">in workspace</span></div>
-              <div class="metric-foot"><span class="status-dot cyan-dot"></span> E5 · Orvan grain corridor</div>
-              <div class="metric-progress"><span style="width:26%"></span></div>
+              <div class="metric-value" id="m-cases">— <span class="metric-trend">in workspace</span></div>
+              <div class="metric-foot"><span class="status-dot cyan-dot"></span> <span id="m-cases-foot">Loading…</span></div>
+              <div class="metric-progress"><span id="m-cases-bar" style="width:0%"></span></div>
             </article>
             <article class="metric-card panel">
               <div class="metric-head"><span>DOCUMENTS IN CORPUS</span><span class="metric-icon green">▤</span></div>
               <div class="metric-value" id="document-count">76 <span class="metric-trend">documents</span></div>
-              <div class="metric-foot"><span class="status-dot green-dot"></span> Checksum manifest available</div>
+              <div class="metric-foot"><span class="status-dot green-dot"></span> <span id="m-docs-foot">Checksum manifest available</span></div>
               <div class="metric-progress green-track"><span style="width:100%"></span></div>
             </article>
             <article class="metric-card panel">
               <div class="metric-head"><span>TRIAL RUNS</span><span class="metric-icon violet">◎</span></div>
-              <div class="metric-value">0 <span class="metric-trend">/ 2 minimum</span></div>
-              <div class="metric-foot"><span class="status-dot violet-dot"></span> Awaiting first retrieval</div>
-              <div class="metric-progress violet-track"><span style="width:0%"></span></div>
+              <div class="metric-value" id="m-runs">— <span class="metric-trend">/ 2 minimum</span></div>
+              <div class="metric-foot"><span class="status-dot violet-dot"></span> <span id="m-runs-foot">Loading…</span></div>
+              <div class="metric-progress violet-track"><span id="m-runs-bar" style="width:0%"></span></div>
             </article>
             <article class="metric-card panel">
               <div class="metric-head"><span>ADJUDICATED CLAIMS</span><span class="metric-icon amber">◇</span></div>
-              <div class="metric-value">— <span class="metric-trend">not yet ruled</span></div>
-              <div class="metric-foot"><span class="status-dot amber-dot"></span> Odin's review pending</div>
-              <div class="metric-progress amber-track"><span style="width:0%"></span></div>
+              <div class="metric-value" id="m-claims">— <span class="metric-trend">claims ruled</span></div>
+              <div class="metric-foot"><span class="status-dot amber-dot"></span> <span id="m-claims-foot">Loading…</span></div>
+              <div class="metric-progress amber-track"><span id="m-claims-bar" style="width:0%"></span></div>
             </article>
           </section>
 
@@ -140,7 +140,7 @@
             <article class="workflow-card panel">
               <div class="section-heading">
                 <div><span class="section-kicker">INVESTIGATION PIPELINE</span><h2>One case. Five checks.</h2></div>
-                <span class="outline-pill"><span class="status-dot cyan-dot"></span> READY TO RUN</span>
+                <span class="outline-pill" id="pipeline-pill"><span class="status-dot cyan-dot"></span> READY TO RUN</span>
               </div>
               <p class="section-description">Every finding is tested before it reaches your briefing.</p>
               <div class="workflow-track">
@@ -151,42 +151,37 @@
                 <button class="workflow-step" data-page="council"><span class="step-node">04</span><span class="step-name">Adjudicate</span><span class="step-agent">Odin</span><span class="step-state">PENDING</span></button>
                 <button class="workflow-step" data-page="briefing"><span class="step-node">05</span><span class="step-name">Brief</span><span class="step-agent">Odin</span><span class="step-state">PENDING</span></button>
               </div>
-              <div class="workflow-note"><span class="note-icon">i</span><span>The first trial has not run yet. No exposure range or claim has been adjudicated.</span><button data-page="council">View agent council <span>→</span></button></div>
+              <div class="workflow-note"><span class="note-icon">i</span><span id="workflow-note-text">Loading the latest case…</span><button data-page="council">View agent council <span>→</span></button></div>
             </article>
 
             <article class="case-card panel">
               <div class="section-heading">
-                <div><span class="section-kicker">CURRENT INVESTIGATION</span><h2>Orvan grain corridor</h2></div>
-                <span class="case-code">E5</span>
+                <div><span class="section-kicker">CURRENT INVESTIGATION</span><h2 id="case-title">Orvan grain corridor</h2></div>
+                <span class="case-code" id="case-code">E5</span>
               </div>
-              <div class="case-status-row"><span class="status-badge status-pending"><span></span> NOT STARTED</span><span class="case-updated">AS OF JAN 25, 2027</span></div>
-              <div class="case-question">How exposed are <strong>Midgard</strong> and <strong>Tolan</strong> to the end of the Orvan corridor agreement?</div>
+              <div class="case-status-row"><span id="case-status"></span><span class="case-updated" id="case-asof">AS OF JAN 25, 2027</span></div>
+              <div class="case-question" id="case-question">How exposed are <strong>Midgard</strong> and <strong>Tolan</strong> to the end of the Orvan corridor agreement?</div>
               <div class="commodity-chips"><span>Wheat imports</span><span>Maize imports</span></div>
-              <div class="case-footer"><span><span class="mini-doc-icon">▤</span> 76 source documents</span><button data-page="investigations">Open investigation <span>→</span></button></div>
+              <div class="case-footer"><span><span class="mini-doc-icon">▤</span> 76 source documents</span><button data-action="open-latest">Open investigation <span>→</span></button></div>
             </article>
           </section>
+
+          <section class="panel feed-card" id="feed-card"><div class="section-heading"><div><span class="section-kicker">LIVE FEED</span><h2>Runemark news replay</h2></div><button class="button button-quiet" data-action="replay-feed">Replay ▶</button></div><ol class="feed-list" id="feed-list"><li class="feed-empty">Loading feed…</li></ol></section>
 
           <section class="lower-grid">
             <article class="investigations-card panel">
               <div class="section-heading">
-                <div><span class="section-kicker">WORKSPACE</span><h2>Recent investigations <span class="heading-count">01</span></h2></div>
+                <div><span class="section-kicker">WORKSPACE</span><h2>Recent investigations <span class="heading-count" id="recent-count">01</span></h2></div>
                 <button class="text-link" data-page="investigations">View all <span>→</span></button>
               </div>
               <div class="table-scroll">
                 <table class="investigations-table">
                   <thead><tr><th>INVESTIGATION</th><th>FOCUS</th><th>STATUS</th><th>UPDATED</th><th></th></tr></thead>
-                  <tbody>
-                    <tr>
-                      <td><div class="table-case-title"><span class="table-case-icon">↗</span><span><strong>Orvan grain corridor collapse</strong><small>E5 · Supply-chain disruption</small></span></div></td>
-                      <td><span class="focus-tag">Midgard</span><span class="focus-tag">Tolan</span><small class="focus-detail">Wheat · Maize</small></td>
-                      <td><span class="status-badge status-pending"><span></span> Not started</span></td>
-                      <td class="date-cell">25 Jan 2027</td>
-                      <td><button class="row-arrow" data-page="investigations" aria-label="Open Orvan grain corridor investigation">↗</button></td>
-                    </tr>
+                  <tbody id="recent-rows"><tr><td colspan="5" class="loading-row">Loading…</td></tr>
                   </tbody>
                 </table>
               </div>
-              <div class="table-footer"><span>Showing <strong>1</strong> investigation in this workspace</span><button data-page="investigations">Open investigation register <span>→</span></button></div>
+              <div class="table-footer"><span id="recent-foot">Loading…</span><button data-page="investigations">Open investigation register <span>→</span></button></div>
             </article>
 
             <article class="agent-card panel">
@@ -207,6 +202,7 @@
           <footer class="page-footer"><span>RAGNARISK INTELLIGENCE SYSTEMS</span><span>Evidence first. Judgment earned.</span><span>RUNEMARK · E5</span></footer>
         </div>
       </main>
+      <aside class="sheet" id="doc-sheet" hidden aria-label="Source document"><div class="sheet-head"><strong id="sheet-title">Source</strong><button class="sheet-close" data-action="close-sheet" aria-label="Close source">✕</button></div><div class="sheet-body" id="sheet-body"></div></aside>
       <div class="toast" id="toast" role="status" aria-live="polite"></div>
       <div class="modal-backdrop" id="modal-backdrop" hidden>
         <section class="dialog panel" role="dialog" aria-modal="true" aria-labelledby="dialog-title">
