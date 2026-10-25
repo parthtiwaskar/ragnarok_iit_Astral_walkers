@@ -117,6 +117,9 @@ async function hydrateOverview() {
     const latest = state.cases.find((c) => c.case_id === state.caseId) || state.cases[0];
     const set = (id, html) => { const el = document.querySelector(id); if (el) el.innerHTML = html; };
     const corpus = summary.corpus;
+    const label = document.querySelector("#qa-corpus");
+    if (label) label.textContent = `${corpus.packs} pack${corpus.packs === 1 ? "" : "s"} · ${corpus.documents} documents`;
+    showAsOf();
     set("#m-cases", `${pad2(state.cases.length)} <span class="metric-trend">in workspace</span>`);
     set("#m-cases-foot", latest ? escapeHtml(caseTitle(latest)) : "No investigation yet");
     document.querySelector("#m-cases-bar")?.style.setProperty("width", state.cases.length ? "100%" : "0%");
@@ -223,6 +226,7 @@ function renderEvidence() {
       <div><div class="eyebrow"><span class="live-dot"></span> INTELLIGENCE <span class="eyebrow-divider">/</span> SOURCE REGISTER</div><h1>Evidence explorer</h1><p class="page-subtitle">Hybrid search: exact words plus meaning. Flags show retractions, duplicates and repaired files.</p></div>
       <div class="heading-actions"><span class="asof-pill"><span class="calendar-icon">▤</span> <strong id="evidence-count">—</strong> RECORDS</span></div>
     </section>
+    <section class="panel chart-card" id="intake-card"></section>
     <section class="panel chart-card" id="doc-timeline"></section>
     <section class="panel evidence-panel">
       <div class="evidence-toolbar"><label class="register-search"><span>⌕</span><input id="evidence-search" type="search" placeholder="Search by words or meaning (e.g. why did grain shipments fall)…" aria-label="Search corpus"></label>
@@ -233,6 +237,7 @@ function renderEvidence() {
       <div class="table-footer"><span id="evidence-result-count">Loading…</span><span>Click a row to read the source</span></div>
     </section>`;
   loadDocs(true);
+  renderIntake(document.querySelector("#intake-card"));
   renderDocTimeline(document.querySelector("#doc-timeline"));
 }
 
@@ -330,6 +335,10 @@ async function renderCouncil() {
   content.innerHTML = skeleton();
   try {
     const run = (await loadCase(state.caseId, true)).case;
+    const [memories, influence] = await Promise.all([
+      Promise.all(["HEIMDALL", "THOR", "LOKI", "ODIN"].map((a) => api(`/memory/${a.toLowerCase()}`).catch(() => ({ agent: a, total: 0, memories: [] })))),
+      api(`/cases/${encodeURIComponent(state.caseId)}/events?types=memory_influence&limit=200`).catch(() => ({ events: [] })),
+    ]);
     const claims = Object.values(run.claims);
     const col = (side) => claims.filter((c) => c.side === side).map((c) => claimCard(run, c)).join("") || '<p class="rating-note">No claims from this side.</p>';
     const running = state.running === state.caseId;
@@ -346,17 +355,34 @@ async function renderCouncil() {
         <div><div class="eyebrow"><span class="live-dot"></span> INTELLIGENCE <span class="eyebrow-divider">/</span> ADVERSARIAL REVIEW</div><h1>Agent council</h1><p class="page-subtitle">${escapeHtml(run.question)}</p></div>
         <div class="heading-actions">${statusBadge(run.status, running)}<button class="button button-primary" data-action="new-investigation">＋ New investigation</button></div>
       </section>
-      <nav class="council-jump" aria-label="Sections"><a href="#council" data-jump="verify">Verification</a><a href="#council" data-jump="trial">Thor vs Loki</a><a href="#council" data-jump="xexam">Cross-examination</a><a href="#council" data-jump="rulings">Rulings</a></nav>
+      <nav class="council-jump" aria-label="Sections"><a href="#council" data-jump="verify">Verification</a><a href="#council" data-jump="trial">Thor vs Loki</a><a href="#council" data-jump="xexam">Cross-examination</a><a href="#council" data-jump="memory">Memory</a><a href="#council" data-jump="rulings">Rulings</a></nav>
       ${running ? `<section class="live-strip panel"><span class="live-dot"></span><ul>${live || "<li>Starting…</li>"}</ul></section>` : ""}
       <section class="panel council-verify" id="j-verify"><div><span class="agent-avatar heimdall">H</span><b>Heimdall</b> · ${run.verified === null ? "verifying…" : run.verified ? "event verified" : "event NOT verified"} <span class="badge">${escapeHtml(run.event_id || "—")}</span></div><p class="clamp">${escapeHtml(run.verdict_reason || "")}</p>${(run.verdict_reason || "").length > 260 ? '<button class="more-btn" data-action="toggle-clamp">Show more</button>' : ""}<div class="cites">${flags}</div></section>
       ${claims.length ? statusBars(run) : ""}
       <section class="trial-cols" id="j-trial"><div><h2><span class="agent-avatar thor">T</span> Thor <small>argues high exposure</small></h2>${col("THOR")}</div>
         <div><h2><span class="agent-avatar loki">L</span> Loki <small>argues limited exposure</small></h2>${col("LOKI")}</div></section>
       ${attacks ? `<section class="brief-section" id="j-xexam"><h2>Cross-examination <em>${Object.keys(run.attacks).length}</em></h2><p class="hint">Each side attacks the other's claims. A defence needs new evidence or it is a concession.</p>${attacks}</section>` : ""}
+      ${memorySection(memories, influence.events)}
       <section class="brief-section" id="j-rulings"><h2><span class="agent-avatar odin">O</span> Odin's rulings by run</h2>${runs || '<p class="rating-note">No run has finished yet.</p>'}<button class="button button-quiet" data-page="briefing" style="margin-top:12px">Open the briefing →</button></section>`;
   } catch (error) {
     content.innerHTML = errorBox("Could not load the trial", error.message);
   }
+}
+
+function memorySection(memories, influence) {
+  const agents = { HEIMDALL: "heimdall", THOR: "thor", LOKI: "loki", ODIN: "odin" };
+  const find = (agent, id) => memories.find((m) => m.agent === agent)?.memories.find((x) => x.id === id);
+  const line = (e) => {
+    if (e.kind === "suppressed_repeat_of_conceded_claim") return `<li><b>Blocked a repeat.</b> It had conceded “${escapeHtml(e.suppressed_claim)}” earlier in this case and offered no new evidence, so the claim never reached the trial. <small>memory #${e.memory_ids[0]} · run ${e.run}</small></li>`;
+    const texts = (e.memory_ids || []).map((id) => find(e.agent, id)?.text).filter(Boolean).map((t) => `“${escapeHtml(t.slice(0, 120))}”`).join(" ");
+    return `<li><b>Used memory</b> #${(e.memory_ids || []).join(", #")} while working on ${escapeHtml(e.phase || "its task")} (run ${e.run}). ${texts}</li>`;
+  };
+  const cards = Object.keys(agents).map((agent) => {
+    const mem = memories.find((m) => m.agent === agent) || { total: 0, memories: [] };
+    const mine = influence.filter((e) => e.agent === agent);
+    return `<article class="mem-card"><header><span class="agent-avatar ${agents[agent]}">${agent[0]}</span><b>${agent}</b><span class="badge">${mem.total} saved</span></header>${mine.length ? `<ul class="mem-list">${mine.map(line).join("")}</ul>` : '<p class="rating-note">Memory did not change this agent\'s actions in this case.</p>'}${mem.memories.length ? `<details class="why"><summary>Private memory (latest ${Math.min(mem.memories.length, 6)})</summary><ul class="mem-list">${mem.memories.slice(0, 6).map((m) => `<li><small>#${m.id} · ${escapeHtml(m.kind)} · known as of ${escapeHtml(m.knowledge_date)}</small><br>${escapeHtml(m.text.slice(0, 220))}</li>`).join("")}</ul></details>` : ""}</article>`;
+  }).join("");
+  return `<section class="brief-section" id="j-memory"><h2>Memory <em>${influence.length} action${influence.length === 1 ? "" : "s"} changed</em></h2><p class="hint">Every agent keeps its own private, lasting memory. Below is each time memory changed what an agent did in this case.</p><div class="mem-grid">${cards}</div></section>`;
 }
 
 function councilEmpty() {
@@ -459,6 +485,11 @@ function ratingCard(row, provisional, pending) {
   </article>`;
 }
 
+function exposureTable(rows, unit) {
+  const cell = (range, cls = "") => `<td class="${cls}">${range ? `<b>${round1(magnitude(range)[0])}</b> to <b>${round1(magnitude(range)[1])}</b>%` : "<span class=\"muted\">no range</span>"}</td>`;
+  return `<div class="table-scroll"><table class="exposure-table"><thead><tr><th>Country</th><th>Sector</th><th>Loki (low to high)</th><th>Thor (low to high)</th><th>Odin (final)</th></tr></thead><tbody>${rows.map((r) => `<tr><td>${escapeHtml(r.country)}</td><td>${escapeHtml(r.sector)}</td>${cell(r.loki)}${cell(r.thor)}${cell(r.odin, "odin-cell")}</tr>`).join("")}</tbody></table></div><p class="chart-note">${unit ? `Unit: ${escapeHtml(unit)}` : "Expected fall in imports, %."} Odin's range is his ruling; Thor's and Loki's are the claims that survived cross-examination.</p>`;
+}
+
 function citeChips(run, claimIds) {
   const seen = new Set();
   return claimIds.flatMap((id) => run.claims?.[id]?.evidence || []).filter((e) => !seen.has(e.doc_id + e.quote) && seen.add(e.doc_id + e.quote)).slice(0, 6).map((e) =>
@@ -475,7 +506,7 @@ function findingsSection(run, title, hint, items, open) {
 }
 
 function renderBriefingResult(runInfo) {
-  queueMicrotask(() => { renderExposureChart(document.querySelector("#exposure-chart"), runInfo.case); renderTradeCard(document.querySelector("#trade-card-brief"), runInfo.case.scope); });
+  queueMicrotask(() => { renderExposureChart(document.querySelector("#exposure-chart"), runInfo.case); renderTradeCard(document.querySelector("#trade-card-brief"), runInfo.case.scope); renderAcceptance(document.querySelector("#acceptance"), runInfo.id); });
   const run = runInfo.case;
   const brief = run.briefing || {};
   const complete = run.status === "COMPLETE";
@@ -492,6 +523,7 @@ function renderBriefingResult(runInfo) {
     <div class="brief-status ${complete ? "ok" : ""}"><span>${complete ? "✓" : "!"}</span><div><strong>${complete ? "Complete" : state.running === run.case_id ? "Running: results will fill in" : "Provisional: this analysis did not finish"}</strong><p>${complete ? "Odin judged the evidence sufficient." : state.running === run.case_id ? "The trial is still running. Ratings appear as Odin rules." : escapeHtml(friendlyReason(run.status_reasons)) + " Treat the ratings below as a first pass."}</p></div></div>
     <section class="rating-grid">${rows.length ? rows.map((row) => ratingCard(row, !complete, state.running === run.case_id || !Object.keys(run.rulings || {}).length)).join("") : '<p class="rating-note">No exposure ranges yet.</p>'}</section>
     <div class="rating-scale" title="Rating is based on the middle of Odin's range">${scale}</div>
+    ${rows.length ? `<section class="panel chart-card" id="exposure-table"><div class="chart-head"><div><span class="section-kicker">EXPOSURE TABLE</span><h2>Low and high bounds</h2></div></div>${exposureTable(rows, run.unit)}</section>` : ""}
     <section class="panel chart-card" id="exposure-chart"></section>
     <section class="panel chart-card" id="trade-card-brief"></section>
     ${brief.executive_summary ? `<section class="brief-section"><h2>Summary</h2><p class="brief-question" style="margin:6px 0 0">${escapeHtml(brief.executive_summary)}</p></section>` : ""}
@@ -499,7 +531,18 @@ function renderBriefingResult(runInfo) {
     ${findingsSection(run, "Disputed", "Credible sources disagree. Not settled.", brief.contested, false)}
     ${findingsSection(run, "Withdrawn or rejected", "Claims a side conceded, or Odin rejected.", brief.conceded, false)}
     ${brief.outlook ? `<section class="brief-section"><h2>Next-quarter outlook</h2><div class="outlook"><p>${escapeHtml(brief.outlook.text)}</p><ul>${(brief.outlook.assumptions || []).map((a) => `<li>${escapeHtml(a)}</li>`).join("")}</ul></div></section>` : ""}
+    <section class="panel chart-card" id="acceptance"></section>
     <p class="sources-line">${docs.length} sources cited: ${docs.map((d) => `<button class="chip-btn" data-action="open-doc" data-doc="${escapeHtml(d)}">${escapeHtml(d)}</button>`).join(" ")}</p>`;
+}
+
+async function renderAcceptance(root, caseId) {
+  if (!root) return;
+  try {
+    const r = await api(`/cases/${encodeURIComponent(caseId)}/acceptance`);
+    const mark = (c) => (c.passed === true ? "✓" : c.passed === false ? "✗" : "○");
+    const cls = (c) => (c.passed === true ? "ok" : c.passed === false ? "bad" : "manual");
+    root.innerHTML = `<div class="chart-head"><div><span class="section-kicker">ACCEPTANCE</span><h2>${r.passed} of ${r.checks.length} minimum criteria met</h2></div></div><ul class="acc-list">${r.checks.map((c) => `<li class="acc-row ${cls(c)}"><span class="acc-mark">${mark(c)}</span><span><strong>${escapeHtml(c.title)}</strong><small>${escapeHtml(c.detail)}</small></span></li>`).join("")}</ul><p class="chart-note">Checked against this case's saved log. ○ means it is judged by eye, not by the log.</p>`;
+  } catch { root.remove(); }
 }
 
 async function renderBriefing() {
@@ -558,13 +601,22 @@ async function renderTradeCard(root, scope) {
     if (hit.length) list = hit;
   }
   // open on the route with the sharpest year-on-year fall, so the story is visible straight away
+  // the year to chart: the latest one that has at least 3 months with a prior-year partner (a stray extra month must not become "the year")
+  const yearOf = (rs) => {
+    const ys = [...new Set(rs.map((r) => r.y))].sort((a, b) => b - a);
+    return ys.find((y) => rs.filter((r) => r.y === y && rs.some((p) => p.y === y - 1 && p.m === r.m)).length >= 3) ?? ys[0];
+  };
   const change = (t) => {
     const rs = t.rows.map((r) => ({ y: +r.period.slice(0, 4), m: +r.period.slice(5), v: r.volume_t }));
-    const y = Math.max(...rs.map((r) => r.y));
+    const y = yearOf(rs);
     const pairs = rs.filter((r) => r.y === y).map((r) => [r.v, rs.find((p) => p.y === y - 1 && p.m === r.m)?.v]).filter(([, p]) => p);
     return pairs.length ? pairs.reduce((a, [c]) => a + c, 0) / pairs.reduce((a, [, p]) => a + p, 0) - 1 : 0;
   };
-  let sel = list.reduce((best, t) => (change(t) < change(best) ? t : best), list[0]).doc_id, metric = "volume_t";
+  // a cut-off or damaged table (one or two months) must not be the first thing a judge sees: prefer tables with a real year-on-year span
+  const span = (t) => { const ms = new Set(t.rows.map((r) => r.period)); return t.rows.filter((r) => ms.has(`${+r.period.slice(0, 4) - 1}${r.period.slice(4)}`)).length; };
+  const solid = list.filter((t) => span(t) >= 3 && !t.damaged_rows);
+  const pool = solid.length ? solid : list;
+  let sel = pool.reduce((best, t) => (change(t) < change(best) ? t : best), pool[0]).doc_id, metric = "volume_t";
   const hidden = new Set();
   const chart = track(window.Charts.lineChart(root.querySelector(".ch-slot")));
   const chips = root.querySelector(".route-chips"), legend = root.querySelector(".legend"), stats = root.querySelector(".stat-strip"), note = root.querySelector(".chart-note");
@@ -572,7 +624,7 @@ async function renderTradeCard(root, scope) {
   const draw = () => {
     const t = list.find((x) => x.doc_id === sel);
     const rows = t.rows.map((r) => ({ ...r, y: +r.period.slice(0, 4), m: +r.period.slice(5) }));
-    const year = Math.max(...rows.map((r) => r.y));
+    const year = yearOf(rows);
     const months = [...new Set(rows.filter((r) => r.y === year).map((r) => r.m))].sort((a, b) => a - b);
     const at = (y, m) => rows.find((r) => r.y === y && r.m === m);
     const cur = months.map((m) => at(year, m)), prev = months.map((m) => at(year - 1, m));
@@ -692,6 +744,87 @@ function statusBars(run) {
   return `<div class="status-bars" aria-label="Claims by ruling">${row("THOR", "THOR")}${row("LOKI", "LOKI")}<p class="chart-note" style="margin:0">Click a segment to show only those claims. Click again to clear.</p></div>`;
 }
 
+
+// ---- data intake (live packs) -----------------------------------------------------
+const MONTH_NAMES = { january: 1, february: 2, march: 3, april: 4, may: 5, june: 6, july: 7, august: 8, september: 9, october: 10, november: 11, december: 12, jan: 1, feb: 2, mar: 3, apr: 4, jun: 6, jul: 7, aug: 8, sep: 9, sept: 9, oct: 10, nov: 11, dec: 12 };
+
+function parseAsOf(text) {
+  const found = [];
+  const add = (index, y, m, d) => {
+    const date = new Date(Date.UTC(y, m - 1, d));
+    if (m >= 1 && m <= 12 && date.getUTCMonth() === m - 1 && date.getUTCDate() === d) found.push([index, date.toISOString().slice(0, 10)]);
+  };
+  for (const m of text.matchAll(/\b(\d{4})-(\d{2})-(\d{2})\b/g)) add(m.index, +m[1], +m[2], +m[3]);
+  for (const m of text.matchAll(/\b(\d{1,2})(?:st|nd|rd|th)?\s+(?:of\s+)?([A-Za-z]+)\.?,?\s+(\d{4})\b/g)) if (MONTH_NAMES[m[2].toLowerCase()]) add(m.index, +m[3], MONTH_NAMES[m[2].toLowerCase()], +m[1]);
+  for (const m of text.matchAll(/\b([A-Za-z]+)\.?\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(\d{4})\b/g)) if (MONTH_NAMES[m[1].toLowerCase()]) add(m.index, +m[3], MONTH_NAMES[m[1].toLowerCase()], +m[2]);
+  if (!found.length) return null;
+  const marker = /as\s+of\b/i.exec(text);
+  const pool = marker ? found.filter((f) => f[0] >= marker.index) : [];
+  return (pool.length ? pool : found).sort((a, b) => a[0] - b[0])[0][1];
+}
+
+function showAsOf() {
+  const el = document.querySelector("#qa-asof");
+  const box = document.querySelector("#investigation-query");
+  if (!el || !box) return;
+  const iso = parseAsOf(box.value);
+  el.textContent = iso ? fmtDate(iso) : "newest pack";
+  el.title = iso ? "Read from your question" : "No date in the question: the newest pack's date is used";
+}
+
+const reportCount = (o) => (Array.isArray(o) ? o.length : Object.keys(o || {}).length);
+
+function packRow(pack) {
+  const r = pack.report || {};
+  const t = r.trade || {};
+  const chips = [
+    [reportCount(r.quarantined), "quarantined", "warn"], [reportCount(r.repaired), "repaired", "ok"], [reportCount(r.duplicates), "duplicates", "warn"],
+    [reportCount(r.truncated), "truncated", "warn"], [reportCount(t.rows_flagged), "trade rows excluded", "bad"], [reportCount(t.incomplete_tables), "cut-off tables", "bad"],
+    [reportCount(r.off_manifest), "not in manifest", "warn"], [reportCount(r.id_collisions), "ID clashes", "bad"],
+  ].filter(([n]) => n).map(([n, label, kind]) => `<span class="pack-chip ${kind}">${n} ${label}</span>`).join("") || '<span class="pack-chip ok">no problems found</span>';
+  const list = (title, entries) => (entries.length ? `<h4>${title} <em>${entries.length}</em></h4><ul class="report-list">${entries.map((e) => `<li>${e}</li>`).join("")}</ul>` : "");
+  const pairs = (o) => Object.entries(o || {}).map(([k, v]) => `<b>${escapeHtml(k)}</b> ${escapeHtml(v)}`);
+  const detail = [
+    list("Quarantined (not used)", pairs(r.quarantined)), list("Repaired", pairs(r.repaired)), list("Duplicates (collapsed in search)", Object.entries(r.duplicates || {}).map(([k, v]) => `<b>${escapeHtml(k)}</b> is a copy of ${escapeHtml(v)}`)),
+    list("Truncated", pairs(r.truncated)),
+    list("Trade rows excluded from every number", (t.rows_flagged || []).map((x) => `<b>${escapeHtml(x.doc_id)}</b> row ${x.row} (${escapeHtml(x.period)}): ${escapeHtml(x.reason.replace(/_/g, " ").toLowerCase())}`)),
+    list("Cut-off trade tables", (t.incomplete_tables || []).map((x) => `<b>${escapeHtml(x.doc_id)}</b> has no usable row for ${escapeHtml(x.missing_months.join(", "))}`)),
+    list("Files the manifest does not list", (r.off_manifest || []).map(escapeHtml)), list("Document ID clashes", (r.id_collisions || []).map(escapeHtml)), list("Notes", (r.notes || []).map(escapeHtml)),
+  ].join("");
+  return `<details class="pack-row"><summary><span class="pack-name"><b>${escapeHtml(pack.name || pack.pack_id)}</b><small>${escapeHtml(pack.event_id || "no event ID")} · ${pack.documents} documents${pack.as_of ? ` · as of ${escapeHtml(pack.as_of)}` : ""}</small></span><span class="pack-chips">${chips}</span></summary>${detail || '<p class="chart-note">Nothing to report.</p>'}</details>`;
+}
+
+async function renderIntake(root) {
+  if (!root) return;
+  root.innerHTML = `<div class="chart-head"><div><span class="section-kicker">DATA INTAKE</span><h2>Packs in the corpus</h2></div><div class="intake-actions"><button class="button button-quiet" data-action="rescan">Rescan folder</button><label class="button button-primary upload-btn">Upload pack (.zip)<input type="file" id="pack-file" accept=".zip,application/zip" hidden></label></div></div><div id="pack-list">${skeleton()}</div><div class="dropzone" id="dropzone">Drop a pack .zip here. New event packs are read live: no code change, no restart.</div><p class="chart-note" id="intake-note"></p>`;
+  const list = root.querySelector("#pack-list");
+  try {
+    const data = await api("/packs");
+    list.innerHTML = data.packs.map(packRow).join("") || '<p class="chart-note">No packs yet.</p>';
+    root.querySelector("#intake-note").textContent = (data.watching ? "Packs dropped into the live folder are picked up automatically every few seconds. " : "") + Object.entries(data.errors || {}).map(([k, v]) => `${k}: ${v}`).join(" · ");
+  } catch (error) {
+    list.innerHTML = errorBox("Could not load packs", error.message);
+  }
+  const upload = async (file) => {
+    if (!file) return;
+    showToast(`Ingesting ${file.name}…`);
+    try {
+      const result = await api("/ingest", { method: "POST", body: await file.arrayBuffer(), headers: { "Content-Type": "application/zip", "X-Pack-Name": file.name } });
+      const r = result.report;
+      state.trade = null;
+      showToast(`Ingested ${r.pack_id}: ${r.ingested} documents, ${reportCount(r.quarantined)} quarantined, ${reportCount(r.trade?.rows_flagged)} trade rows excluded.`);
+      renderEvidence();
+    } catch (error) {
+      showToast(error.message);
+    }
+  };
+  root.querySelector("#pack-file").addEventListener("change", (event) => upload(event.target.files[0]));
+  const zone = root.querySelector("#dropzone");
+  ["dragenter", "dragover"].forEach((name) => zone.addEventListener(name, (event) => { event.preventDefault(); zone.classList.add("over"); }));
+  ["dragleave", "drop"].forEach((name) => zone.addEventListener(name, (event) => { event.preventDefault(); zone.classList.remove("over"); }));
+  zone.addEventListener("drop", (event) => upload(event.dataTransfer.files[0]));
+}
+
 // ---- dialog & events --------------------------------------------------------------
 function openDialog() { modal.hidden = false; document.querySelector("#dialog-query").value = activeQuestion; document.querySelector("#dialog-query").focus(); }
 function closeDialog() { modal.hidden = true; }
@@ -720,6 +853,7 @@ document.addEventListener("click", (event) => {
     case "close-sheet": closeSheet(); break;
     case "export-briefing": downloadBriefing(); break;
     case "retry": refreshCurrent(); break;
+    case "rescan": api("/ingest/scan", { method: "POST" }).then((r) => { showToast(r.ingested.length ? `Ingested: ${r.ingested.join(", ")}` : "No new packs in the folder."); state.trade = null; renderEvidence(); }).catch((e) => showToast(e.message)); break;
     case "filter-claims": { const cols = document.querySelector(".trial-cols"); const on = cols.dataset.filter !== d.status; if (on) cols.dataset.filter = d.status; else delete cols.dataset.filter; document.querySelectorAll(".sbar button").forEach((b) => b.classList.toggle("on", on && b.dataset.status === d.status)); break; }
     case "toggle-clamp": { const p = target.previousElementSibling; p.classList.toggle("open"); target.textContent = p.classList.contains("open") ? "Show less" : "Show more"; break; }
   }
@@ -742,6 +876,7 @@ document.addEventListener("input", (event) => {
     activeQuestion = event.target.value;
     sessionStorage.setItem("ragnarisk-active-question", activeQuestion);
   }
+  if (event.target.id === "investigation-query") showAsOf();
   if (event.target.id === "evidence-search") { clearTimeout(docTimer); docTimer = setTimeout(() => loadDocs(), 250); }
 });
 

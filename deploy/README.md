@@ -1,6 +1,6 @@
 # Deploying Ragnarisk
 
-One container: the dashboard + API + SQLite database + the agents. It runs one trial at a time and keeps its data in `/data`.
+One container: the dashboard + API + SQLite database + the agents. It runs one trial at a time by default (`MAX_CONCURRENT_TRIALS`) and keeps its data in `/data`.
 
 ## 1. Environment keys
 
@@ -14,7 +14,9 @@ Copy `deploy/.env.example` to `deploy/.env` and fill it in. The ones that matter
 | `NINE_REALMS_PROVIDER` | no | `anthropic` or `groq`; empty picks whichever key is set. |
 | `ANTHROPIC_MODEL` / `GROQ_MODEL` | no | Defaults `claude-sonnet-5-5` / `openai/gpt-oss-120b`. |
 | `MAX_TRIALS_PER_DAY`, `TRIAL_COOLDOWN_SECONDS` | no | Spending caps (defaults 20 per UTC day, 30 s per client). |
-| `MAX_LLM_CALLS`, `MAX_CASE_TOKENS` | no | Per-trial caps (defaults 150 calls, 1,000,000 tokens). |
+| `MAX_LLM_CALLS`, `MAX_CASE_TOKENS` | no | Per-trial caps (defaults 150 calls, 2,500,000 tokens). |
+| `MAX_CONCURRENT_TRIALS` | no | Trials running at once (default 1). Raise it for the final round if the LLM key has the rate headroom. |
+| `LIVE_PACKS_DIR`, `WATCH_INTERVAL_SECONDS`, `MAX_UPLOAD_MB` | no | Live event-pack intake: watched drop folder (default `/data/live_packs`), poll seconds (0 = off), largest upload (default 50 MB). |
 | `ALLOWED_ORIGINS` | no | Extra browser origins allowed to POST (the same host always is). |
 | `TRUST_PROXY` | no | `1` behind a reverse proxy, so limits use `X-Forwarded-For`. |
 | `PORT` | no | Published port (default 8765). |
@@ -72,3 +74,20 @@ unprivileged user (uid 10001) before running the app. `docker compose` already s
 - API keys live only in the server environment and are never sent to the browser.
 
 Limits to know: one instance, one trial at a time, plain HTTP inside the container, a single shared access token (no per-user accounts).
+
+## 7. Adding a new event pack while it runs (no restart, no code change)
+
+Any of these ingests the pack, repairs what it can, quarantines what it cannot, and returns an intake report. The new documents are searchable at once.
+
+```bash
+# a) from the dashboard: Evidence page > Data intake > Upload pack (.zip), or drop the zip on the panel
+# b) from a shell, with the access token
+curl -X POST http://localhost:8765/api/ingest -H "Authorization: Bearer $APP_ACCESS_TOKEN" -H "X-Pack-Name: E9" --data-binary @pack_e9.zip
+# c) drop the folder or zip into the watched directory (inside the volume), then optionally force a rescan
+docker cp pack_e9 $(docker compose -f deploy/docker-compose.yml ps -q ragnarisk):/data/live_packs/
+curl -X POST http://localhost:8765/api/ingest/scan -H "Authorization: Bearer $APP_ACCESS_TOKEN"
+```
+
+A pack is a folder with `manifest.json` and a `docs/` folder (zips with one wrapping folder are fine). Re-ingesting the same pack changes nothing; a pack with a changed
+file is re-read. Unsafe archives (paths that escape the folder, symlinks, oversize) are refused.
+Then ask the question in the dashboard. If it says "As of 25 January 2027", that date becomes the clock, with no field to fill in.

@@ -1,7 +1,7 @@
 # Trial of the Nine Realms: Pitch Script
 
 Written against what is actually built and running (the `nine_realms` agents, the Ragnarisk dashboard, the database/API, the Docker/Render deployment).
-It replaces the demo beats in `DEMO_SCRIPT.md` that describe features we do not have (see section 9).
+It replaces the demo beats in `docs/DEMO_SCRIPT.md` that describe features we do not have (see section 9).
 
 ---
 
@@ -51,7 +51,7 @@ Tagline for slide one: **Not a summary. A trial.**
 | Trap handling | Retraction, rumours, injection, duplicates, repaired encoding, quarantined file all surfaced in the Council page | A "fake event" rejection case was not run: the E5 pack has none |
 | Quality of debate | The scorecard, the new enforced rules, 8 offline tests for them | Real-model behaviour under the new rules is **not yet verified** |
 | Reliability | Provider outages end cleanly as INCOMPLETE, never a crash; hard limits on runs, tool calls, tokens | |
-| Reproducibility | Every run is saved in the database with its event log and as-of date | No one-command replay |
+| Reproducibility | Every run is saved with its event log, as-of date, provider and limits; `dryrun` replays the whole pipeline offline | No one-command replay of a real model run |
 | Range accuracy and calibration | Ranges shown with width and a Thor/Loki gap | We do not know the true values. Do **not** claim accuracy |
 | Briefing and UI | Rating cards, three-views chart, citation click-through to the exact row, mobile layout | |
 
@@ -61,18 +61,20 @@ Tagline for slide one: **Not a summary. A trial.**
 - **"How do you stop hallucinated citations?"** The quote must appear in the document, the ID must be in the manifest, the date must be on or before the as-of date, and retracted documents are rejected. All checked in code, not by asking the model.
 - **"Why did your agents concede so much?"** Honest answer: in our first real run, 6 of 8 attacked claims were conceded and attacks were vague. We measured that, then enforced evidence-backed attacks, a guard on conceding well-sourced facts, and a revise option. They are tested offline; the next real run will show whether they work.
 - **"Is the range accurate?"** "We don't have the organisers' truth. We can show it brackets the trade data (Midgard wheat fell 44% over the half-year), and we are explicit where the evidence runs out (Tolan maize)."
-- **"Can it handle new documents in the final round?"** The ingester re-reads a changed pack, repairs encodings, parses PDF/TXT/DOCX and flags damaged rows without code changes. There is no upload button yet, so say "re-ingest on restart", not "live drop".
+- **"Can it handle new documents in the final round?"** Yes, live and with no code change: upload a pack zip (or drop it in a watched folder), and the intake report lists what was repaired, quarantined or excluded. New documents are searchable at once, and the as-of date is read from the question. We rehearsed it with synthetic packs that contain every damage type, but not yet with a real model on a pack we have never seen.
 - **"What if the LLM provider fails?"** The trial ends INCOMPLETE with the reason; saved cases stay viewable; providers are switchable by environment variable.
 - **"Is it safe to deploy?"** Token-protected API, refuses a public bind without a token, daily trial caps, cross-origin POSTs blocked, strict headers, unprivileged container.
 
 ## 7. Things not to say
 
 - Don't claim the ranges are accurate, or that a full two-run case completed, unless you have run one by then.
-- Don't call ingestion "live upload" or show a sealed-envelope animation, a memory inspector or a replay command: none exist in this build.
+- Don't show a "replay" command or a sealed-envelope animation: neither exists. Do not present the scripted dry run (`python -m nine_realms.dryrun`) as a model result: it proves the pipeline and the acceptance checker, not the quality of the debate.
 - Don't show the aborted Groq runs, or any API key, token or `.env`.
 - Don't call a search "semantic" on the Render starter plan if it runs the lightweight embedder: say "fuzzy matching".
 
 ## 8. Before you pitch (in this order)
+
+0. Read `docs/FINAL_ROUND_STRATEGY.md` (metric decision, runbook, checklist).
 
 1. **Complete one full two-run case** on Anthropic (the key is capped until 1 Nov, or raise the limit). It is the strongest proof, and it tests the new debate rules for the first time.
 2. Rotate the Groq and Anthropic keys that were pasted in chat.
@@ -80,9 +82,9 @@ Tagline for slide one: **Not a summary. A trial.**
 4. Record a 3-minute backup video of the demo, and keep one finished case loaded so the demo never waits on an LLM.
 5. Rehearse with a timer; keep the 5-minute version and the 8-minute version both ready.
 
-## 9. Beats in `DEMO_SCRIPT.md` that we cannot demo as written
+## 9. Beats in `docs/DEMO_SCRIPT.md` that we still cannot demo as written
 
-Sealed-envelope animation, Memory tab with a diff, "chaos zip" drag-and-drop ingestion, `cli.py replay`/`eval`/`export`, "Odin's band narrows from Run 1 to Run 2" (no completed run 2 yet), a rumour question that returns CASE REJECTED. Either build them or cut them from the script.
+Sealed-envelope animation, a Memory tab with a diff (we have a read-only memory inspector and a log of when memory changed an action), `cli.py replay/eval/export`, "Odin's band narrows from Run 1 to Run 2" (no completed real run 2 yet), a rumour question that returns CASE REJECTED on the E5 pack (use the generated fake-event pack: `python -m nine_realms.rehearsal --kind fake-event`). The "chaos zip drag-and-drop" now exists: use the Evidence page, Data intake panel.
 
 ## 10. Closing line
 

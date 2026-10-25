@@ -1,0 +1,81 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1120 780" font-family="Inter, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" role="img" aria-labelledby="t d">
+  <title id="t">Trial of the Nine Realms: architecture</title>
+  <desc id="d">New packs flow into a hybrid-search corpus. Behind a guarded tool layer, four agents argue over a shared case file under a procedural orchestrator. Results are stored and served to a dashboard.</desc>
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#475569"/></marker>
+    <marker id="g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#94a3b8"/></marker>
+    <style>
+      .box{fill:#fff;stroke:#cbd5e1;stroke-width:1.4}
+      .lane{fill:#f8fafc;stroke:#e2e8f0;stroke-width:1}
+      .t{font-size:15px;font-weight:650;fill:#0f172a}
+      .s{font-size:12px;fill:#475569}
+      .h{font-size:11px;font-weight:700;letter-spacing:.08em;fill:#64748b;text-transform:uppercase}
+      .ln{stroke:#475569;stroke-width:1.6;fill:none}
+      .dash{stroke:#94a3b8;stroke-width:1.4;fill:none;stroke-dasharray:5 4}
+      .lbl{font-size:11.5px;fill:#334155}
+      .thor{fill:#fef2f2;stroke:#f87171}.loki{fill:#eff6ff;stroke:#60a5fa}.odin{fill:#f5f3ff;stroke:#a78bfa}.heim{fill:#ecfdf5;stroke:#34d399}
+      .core{fill:#fffbeb;stroke:#f59e0b;stroke-width:1.6}
+      .mem{fill:#fff;stroke:#94a3b8;stroke-dasharray:3 3}
+      @media (prefers-color-scheme:dark){
+        .box{fill:#1e293b;stroke:#475569}.lane{fill:#0f172a;stroke:#334155}.t{fill:#f1f5f9}.s{fill:#94a3b8}.h{fill:#94a3b8}.lbl{fill:#cbd5e1}
+        .ln{stroke:#94a3b8}.thor{fill:#3b1d24;stroke:#f87171}.loki{fill:#172554;stroke:#60a5fa}.odin{fill:#2e2057;stroke:#a78bfa}.heim{fill:#0f3a2e;stroke:#34d399}
+        .core{fill:#3a2e0e;stroke:#f59e0b}.mem{fill:#1e293b;stroke:#64748b}
+      }
+    </style>
+  </defs>
+
+  <!-- lanes -->
+  <rect class="lane" x="20" y="20" width="1080" height="118" rx="14"/><text class="h" x="40" y="44">1 · Intake</text>
+  <rect class="lane" x="20" y="158" width="1080" height="150" rx="14"/><text class="h" x="40" y="182">2 · Corpus and tools</text>
+  <rect class="lane" x="20" y="328" width="1080" height="290" rx="14"/><text class="h" x="40" y="352">3 · The trial</text>
+  <rect class="lane" x="20" y="638" width="1080" height="122" rx="14"/><text class="h" x="40" y="662">4 · Record</text>
+
+  <!-- 1 intake -->
+  <rect class="box" x="40" y="58" width="230" height="64" rx="10"/><text class="t" x="56" y="84">Event pack</text><text class="s" x="56" y="104">zip upload · drop folder · rescan</text>
+  <rect class="box" x="330" y="58" width="400" height="64" rx="10"/><text class="t" x="346" y="84">Ingest and repair</text><text class="s" x="346" y="104">PDF/TXT/DOCX · encodings · duplicates · truncation · bad rows</text>
+  <rect class="box" x="770" y="58" width="310" height="64" rx="10"/><text class="t" x="786" y="84">Intake report</text><text class="s" x="786" y="104">found · fixed · quarantined · excluded</text>
+  <path class="ln" d="M270 90H328" marker-end="url(#a)"/><path class="ln" d="M730 90H768" marker-end="url(#a)"/>
+
+  <!-- 2 corpus + tools -->
+  <rect class="box" x="40" y="196" width="320" height="94" rx="10"/><text class="t" x="56" y="222">Corpus database (SQLite)</text>
+  <text class="s" x="56" y="242">documents · paragraphs · trade rows · packs</text><text class="s" x="56" y="260">FTS5 keyword + vector embeddings</text><text class="s" x="56" y="278">tiers · retractions · quarantine</text>
+  <rect class="box" x="400" y="196" width="680" height="94" rx="10"/><text class="t" x="416" y="222">Tool guard (every agent call passes through it)</text>
+  <text class="s" x="416" y="244">allowlist → budget → AS-OF FIREWALL → de-duplicate → retry → injection scan → log</text>
+  <text class="s" x="416" y="266">hybrid search + filters · documents · trade tables · net imports · verify citation</text>
+  <path class="ln" d="M360 243H398" marker-start="url(#a)" marker-end="url(#a)"/>
+    <path class="ln" d="M345 122V194" marker-end="url(#a)"/>
+
+  <!-- 3 trial -->
+  <rect class="core" x="40" y="376" width="290" height="226" rx="12"/><text class="t" x="56" y="402">The Thing (orchestrator)</text>
+  <text class="s" x="56" y="424">plain code · no LLM · no content decisions</text>
+  <text class="s" x="56" y="448">· opens the case, seals round 1</text><text class="s" x="56" y="466">· cross-examination turns</text><text class="s" x="56" y="484">· Odin's rulings, sufficiency</text><text class="s" x="56" y="502">· remand → research → run 2</text>
+  <text class="s" x="56" y="526">· hard limits: runs, LLM calls, tokens,</text><text class="s" x="64" y="544">tool calls per turn, timeouts</text>
+  <text class="s" x="56" y="568">· failures end a turn, never the case</text>
+
+  <rect class="box" x="385" y="376" width="285" height="166" rx="12"/><text class="t" x="401" y="402">Case File (shared blackboard)</text>
+  <text class="s" x="401" y="424">question · as-of date · verdict · scope</text><text class="s" x="401" y="444">claims + evidence + estimates</text><text class="s" x="401" y="464">attacks · responses · rulings</text><text class="s" x="401" y="484">ranges · runs · red flags · briefing</text>
+  <text class="s" x="401" y="506">Agents share ONLY this file.</text><text class="s" x="401" y="521">Round 1 is sealed: Thor and Loki</text><text class="s" x="401" y="536">cannot see each other.</text>
+  <path class="ln" d="M330 489H383" marker-start="url(#a)" marker-end="url(#a)"/>
+
+  <rect class="heim" x="700" y="376" width="185" height="104" rx="10"/><text class="t" x="714" y="400">Heimdall</text><text class="s" x="714" y="420">gatekeeper: is the event</text><text class="s" x="714" y="436">real? builds the pool,</text><text class="s" x="714" y="452">flags traps, researches</text><text class="s" x="714" y="468">on remand</text>
+  <rect class="odin" x="895" y="376" width="185" height="104" rx="10"/><text class="t" x="909" y="400">Odin</text><text class="s" x="909" y="420">judge: rules on every</text><text class="s" x="909" y="436">claim, sets the range,</text><text class="s" x="909" y="452">names what is missing,</text><text class="s" x="909" y="468">writes the briefing</text>
+  <rect class="thor" x="700" y="494" width="185" height="104" rx="10"/><text class="t" x="714" y="518">Thor</text><text class="s" x="714" y="538">argues HIGH exposure</text><text class="s" x="714" y="554">own queries, evidence,</text><text class="s" x="714" y="570">cross-examines Loki</text>
+  <rect class="loki" x="895" y="494" width="185" height="104" rx="10"/><text class="t" x="909" y="518">Loki</text><text class="s" x="909" y="538">argues LIMITED exposure</text><text class="s" x="909" y="554">own queries, evidence,</text><text class="s" x="909" y="570">cross-examines Thor</text>
+  <path class="ln" d="M670 456H698" marker-start="url(#a)" marker-end="url(#a)"/>
+
+  <!-- agent tool access -->
+  <path class="dash" d="M890 376V292" marker-end="url(#g)"/><text class="lbl" x="900" y="340">agents call tools</text><text class="lbl" x="900" y="355">through the guard</text>
+
+  <!-- 4 record and product -->
+  <rect class="box" x="40" y="676" width="250" height="68" rx="10"/><text class="t" x="56" y="702">Private memory ×4</text><text class="s" x="56" y="722">one file per agent · clock-aware</text>
+  <rect class="box" x="310" y="676" width="290" height="68" rx="10"/><text class="t" x="326" y="702">Case store + event log</text><text class="s" x="326" y="722">every claim, query, ruling, memory use</text>
+  <rect class="box" x="640" y="676" width="200" height="68" rx="10"/><text class="t" x="656" y="702">HTTP API</text><text class="s" x="656" y="722">token · limits · acceptance</text>
+  <rect class="box" x="880" y="676" width="200" height="68" rx="10"/><text class="t" x="896" y="702">Dashboard</text><text class="s" x="896" y="722">feed · trial · exposure</text>
+  <path class="ln" d="M600 710H638" marker-end="url(#a)"/><path class="ln" d="M840 710H878" marker-end="url(#a)"/>
+  <path class="ln" d="M165 602V674" marker-end="url(#a)"/>
+  <path class="ln" d="M320 602V674" marker-end="url(#a)"/>
+  
+
+  <rect class="box" x="385" y="554" width="285" height="48" rx="10"/><text class="t" x="401" y="574">LLM client (swappable)</text><text class="s" x="401" y="592">Anthropic · Groq · offline scripted</text>
+  <path class="dash" d="M670 578H698" marker-end="url(#g)"/>
+</svg>

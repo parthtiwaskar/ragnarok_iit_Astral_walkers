@@ -13,8 +13,13 @@ Serves index.html / app.js / charts.js / styles.css and a JSON API backed by one
   GET  /api/cases                       saved cases
   GET  /api/cases/<id>                  full case (claims, evidence, attacks, responses, rulings, ranges, briefing)
   GET  /api/cases/<id>/events?since=N   event log, for live progress
+  GET  /api/cases/<id>/acceptance       the ten minimum acceptance criteria, checked against this case
   GET  /api/cases/<id>/briefing.md      the briefing as Markdown
-  POST /api/cases {question, as_of?, options?}  start a trial in the background (one at a time) -> 202 {case_id}
+  GET  /api/memory/<agent>              an agent's private memory, read-only (for the dashboard inspector)
+  GET  /api/packs                       ingested packs with their intake reports (damage found, rows excluded, ...)
+  POST /api/ingest (zip body)           ingest a new event pack LIVE, no restart (also: drop a folder/zip in LIVE_PACKS_DIR)
+  POST /api/ingest/scan                 rescan LIVE_PACKS_DIR now
+  POST /api/cases {question, as_of?, options?}  start a trial in the background -> 202 {case_id}; as_of is read from the question
 
 Deployment safety:
   * APP_ACCESS_TOKEN protects every /api route except /api/health (Authorization: Bearer <token>)
@@ -44,8 +49,10 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 from .corpus import LocalCorpus
+from .dates import extract_as_of
 from .env import load_env
 from .events import EventBus
+from .livepacks import LivePacks, UnsafeArchive
 from .models import CaseFile
 from .store import Store
 from .thing import Thing
@@ -92,8 +99,12 @@ class Config:
     max_trials_per_day: int = 20
     cooldown_s: int = 30
     max_llm_calls: int = 150
-    max_case_tokens: int = 1_000_000
+    max_case_tokens: int = 2_500_000
     log_requests: bool = False
+    live_dir: str = str(ROOT / "data" / "live_packs")
+    watch_interval: float = 5.0
+    max_upload_mb: int = 50
+    max_concurrent: int = 1
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -109,8 +120,11 @@ class Config:
             allowed_origins={o.strip().rstrip("/") for o in os.environ.get("ALLOWED_ORIGINS", "").split(",") if o.strip()},
             trust_proxy=os.environ.get("TRUST_PROXY", "") == "1",
             max_trials_per_day=_int("MAX_TRIALS_PER_DAY", 20), cooldown_s=_int("TRIAL_COOLDOWN_SECONDS", 30),
-            max_llm_calls=_int("MAX_LLM_CALLS", 150), max_case_tokens=_int("MAX_CASE_TOKENS", 1_000_000),
+            max_llm_calls=_int("MAX_LLM_CALLS", 150), max_case_tokens=_int("MAX_CASE_TOKENS", 2_500_000),
             log_requests=os.environ.get("LOG_LEVEL", "info").lower() in ("info", "debug"),
+            live_dir=os.environ.get("LIVE_PACKS_DIR") or (str(Path(data) / "live_packs") if data else str(ROOT / "data" / "live_packs")),
+            watch_interval=float(os.environ.get("WATCH_INTERVAL_SECONDS", 5)), max_upload_mb=_int("MAX_UPLOAD_MB", 50),
+            max_concurrent=max(1, _int("MAX_CONCURRENT_TRIALS", 1)),
         )
 
 
@@ -142,9 +156,26 @@ def detect_provider() -> str:
 class App:
     def __init__(self, corpus: LocalCorpus, store: Store, cfg: Config, provider: str) -> None:
         self.corpus, self.store, self.cfg, self.provider = corpus, store, cfg, provider
-        self.running: str | None = None
+        self._running: dict[str, None] = {}  # insertion-ordered set of trials in flight
+        self.live: LivePacks | None = None
         self._lock = threading.Lock()
         self._last_start: dict[str, float] = {}  # client -> time of its last trial, for the cooldown
+
+    @property
+    def running(self) -> str | None:
+        """The most recently started trial still running (the dashboard follows this one)."""
+        return next(reversed(self._running), None)
+
+    @running.setter
+    def running(self, value: str | None) -> None:
+        if value is None:
+            self._running.clear()
+        else:
+            self._running[value] = None
+
+    @property
+    def running_ids(self) -> list[str]:
+        return list(self._running)
 
     def allow_trial(self, client: str) -> tuple[bool, str, int]:
         """(ok, reason, retry_after_seconds). Trials spend real money, so they are rationed."""
@@ -159,10 +190,10 @@ class App:
 
     def start_case(self, question: str, as_of: str, options: dict[str, int] | None = None, client: str = "-") -> str:
         with self._lock:
-            if self.running:
+            if len(self._running) >= self.cfg.max_concurrent:
                 raise RuntimeError(f"busy:{self.running}")
             case_id = f"CASE-{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:4]}"
-            self.running = case_id
+            self._running[case_id] = None
             self._last_start[client] = time.time()
         self.store.save_case(CaseFile(case_id, question, as_of).to_dict(), self.provider)  # visible (and counted) immediately
         threading.Thread(target=self._run, args=(case_id, question, as_of, options or {}), daemon=True).start()
@@ -185,7 +216,7 @@ class App:
             print(f"[trial {case_id}] failed: {type(exc).__name__}: {exc}", file=sys.stderr)
         finally:
             with self._lock:
-                self.running = None
+                self._running.pop(case_id, None)
 
 
 def make_handler(app: App):
@@ -263,7 +294,8 @@ def make_handler(app: App):
                 elif path == "/api/health":
                     body: dict[str, Any] = {"ok": True, "version": __version__, "auth_required": bool(cfg.token)}
                     if self._authorized():
-                        body |= {"provider": app.provider or None, "running": app.running, "as_of_default": app.corpus.pack_as_of}
+                        body |= {"provider": app.provider or None, "running": app.running, "running_ids": app.running_ids,
+                                 "as_of_default": app.corpus.pack_as_of, "max_concurrent": cfg.max_concurrent}
                     self._json(200, body)
                 elif not path.startswith("/api/"):
                     self._json(404, {"error": "not found"})
@@ -291,6 +323,27 @@ def make_handler(app: App):
             if len(parts) == 2 and parts[0] == "documents":
                 d = c.get_document(parts[1])
                 return self._json(200, d) if d else self._json(404, {"error": "no such document"})
+            if len(parts) == 2 and parts[0] == "memory":
+                agent = parts[1].lower()
+                if agent not in ("heimdall", "thor", "loki", "odin"):
+                    return self._json(404, {"error": "no such agent"})
+                path = Path(cfg.memory_dir) / f"{agent}.sqlite"
+                if not path.exists():
+                    return self._json(200, {"agent": agent.upper(), "memories": [], "total": 0})
+                import sqlite3
+                db = sqlite3.connect(f"file:{path}?mode=ro", uri=True)  # the inspector can only read: memory is private to its agent
+                rows = db.execute("SELECT id,kind,text,case_id,knowledge_date,tags FROM memories ORDER BY id DESC LIMIT 100").fetchall()
+                total = db.execute("SELECT COUNT(*) FROM memories").fetchone()[0]
+                db.close()
+                return self._json(200, {"agent": agent.upper(), "total": total, "memories": [
+                    dict(zip(("id", "kind", "text", "case_id", "knowledge_date", "tags"), r)) for r in rows]})
+            if parts == ["packs"]:
+                packs = c.list_packs()
+                return self._json(200, {"packs": packs, "watching": bool(app.live and cfg.watch_interval > 0),
+                                        "errors": app.live.errors if app.live else {}, "as_of_default": c.pack_as_of})
+            if len(parts) == 2 and parts[0] == "packs":
+                hit = [p for p in c.list_packs() if p["pack_id"] == parts[1]]
+                return self._json(200, hit[0]) if hit else self._json(404, {"error": "no such pack"})
             if parts == ["trade"]:
                 return self._json(200, {"tables": c.trade_series(q.get("as_of", "")), "as_of": q.get("as_of") or c.pack_as_of})
             if parts == ["feed"]:
@@ -302,14 +355,37 @@ def make_handler(app: App):
                 if not case:
                     return self._json(404, {"error": "no such case"})
                 if len(parts) == 2:
-                    return self._json(200, {**case, "is_running": app.running == parts[1]})
+                    return self._json(200, {**case, "is_running": parts[1] in app.running_ids})
                 if parts[2] == "events":
                     return self._json(200, {"events": s.events(parts[1], int(q.get("since", -1)), min(int(q.get("limit", 500)), 2000),
                                                                q["types"].split(",") if q.get("types") else None),
-                                            "is_running": app.running == parts[1], "status": case["status"]})
+                                            "is_running": parts[1] in app.running_ids, "status": case["status"]})
+                if parts[2] == "acceptance":
+                    from .acceptance import check
+                    res = check(case, s.events(parts[1], limit=100000), c.stats(), c.list_packs())
+                    return self._json(200, {"checks": res, "passed": sum(1 for r in res if r["passed"]),
+                                            "failed": sum(1 for r in res if r["passed"] is False)})
                 if parts[2] == "briefing.md":
                     return self._send(200, case["briefing_md"].encode(), "text/markdown")
             self._json(404, {"error": "not found"})
+
+        def _ingest(self, path: str) -> None:
+            if app.live is None:
+                return self._json(503, {"error": "live pack intake is not enabled on this server"})
+            try:
+                if path.endswith("/scan"):
+                    reports = app.live.scan()
+                    return self._json(200, {"ingested": [r["pack_id"] for r in reports], "reports": reports, "errors": app.live.errors})
+                length = int(self.headers.get("Content-Length", 0))
+                if length <= 0:
+                    return self._json(400, {"error": "send the pack as a zip file in the request body"})
+                if length > cfg.max_upload_mb * 1024 * 1024:
+                    self.close_connection = True  # the body is not read, so the connection cannot be reused
+                    return self._json(413, {"error": f"upload larger than {cfg.max_upload_mb} MB"}, {"Connection": "close"})
+                report = app.live.accept_upload(self.rfile.read(length), self.headers.get("X-Pack-Name", ""))
+                self._json(201, {"pack_id": report["pack_id"], "report": report})
+            except UnsafeArchive as exc:
+                self._json(400, {"error": str(exc)})
 
         def do_POST(self) -> None:
             started = time.time()
@@ -319,11 +395,13 @@ def make_handler(app: App):
                     return self._json(403, {"error": "cross-origin request refused"})
                 if not self._authorized():
                     return self._json(401, {"error": "access token required"}, {"WWW-Authenticate": "Bearer"})
+                if path == "/api/ingest" or path == "/api/ingest/scan":
+                    return self._ingest(path)
                 if path != "/api/cases":
                     return self._json(404, {"error": "not found"})
                 body = json.loads(self.rfile.read(min(int(self.headers.get("Content-Length", 0)), 20_000)) or b"{}")
                 question = str(body.get("question", "")).strip()
-                as_of = str(body.get("as_of") or app.corpus.pack_as_of)
+                as_of = str(body.get("as_of") or extract_as_of(question) or app.corpus.pack_as_of)
                 if not 10 <= len(question) <= 1500:
                     return self._json(400, {"error": "question must be 10 to 1500 characters"})
                 if not DATE.match(as_of):
@@ -363,7 +441,12 @@ def build_app(cfg: Config) -> App:
             cid = store.import_run_dir(d)
             if cid:
                 print(f"imported {cid}")
-    return App(corpus, store, cfg, detect_provider())
+    app = App(corpus, store, cfg, detect_provider())
+    app.live = LivePacks(corpus, cfg.live_dir, cfg.watch_interval)
+    for report in app.live.scan():  # packs already waiting in the drop folder
+        print(f"ingested live pack {report['pack_id']}: {report['ingested']} documents, {len(report['quarantined'])} quarantined")
+    app.live.start()
+    return app
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -387,7 +470,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"corpus: {app.corpus.stats()}\nstore:  {app.store.counts()}")
     print(f"live trials: {'enabled via ' + app.provider if app.provider else 'DISABLED (no ANTHROPIC_API_KEY / GROQ_API_KEY in the environment)'}")
     print(f"auth: {'access token required' if cfg.token else 'OFF (loopback only)'} · limits: {cfg.max_trials_per_day} trials/day, "
-          f"{cfg.cooldown_s}s cooldown · mode: {'production' if cfg.production else 'development'}")
+          f"{cfg.cooldown_s}s cooldown · {cfg.max_concurrent} concurrent · mode: {'production' if cfg.production else 'development'}")
     httpd = ThreadingHTTPServer((cfg.host, cfg.port), make_handler(app))
     signal.signal(signal.SIGTERM, lambda *_: threading.Thread(target=httpd.shutdown, daemon=True).start())  # graceful stop in containers
     print(f"serving http://{cfg.host}:{cfg.port}", flush=True)

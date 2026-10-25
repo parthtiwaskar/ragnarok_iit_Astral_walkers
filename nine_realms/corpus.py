@@ -17,6 +17,7 @@ import json
 import re
 import sqlite3
 import threading
+import time
 from collections import Counter
 from datetime import date
 from difflib import SequenceMatcher
@@ -37,16 +38,18 @@ _TITLE_ROUTE = re.compile(r"Trade note:\s*(\w+) to (\w+),\s*(\w+)", re.I)
 _ROW = re.compile(r"In (\w+) (\d{4}), the value was USD ([\d,.]+)M and the volume was ([\d,]+) tonnes", re.I)
 _ROW_START = re.compile(r"^(?:\[P\d+\]\s*)?In (\w+) (\d{4})\b", re.I)
 
-PARSER_VERSION = "2"  # bump when parsing changes so stale databases are rebuilt
+PARSER_VERSION = "4"  # bump when parsing changes so stale databases are rebuilt
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta(k TEXT PRIMARY KEY, v TEXT);
 CREATE TABLE IF NOT EXISTS docs(doc_id TEXT PRIMARY KEY, event_id TEXT, title TEXT, outlet TEXT, source_type TEXT,
   tier INTEGER, date TEXT, time TEXT, country TEXT, sector TEXT, format TEXT, file TEXT, body TEXT,
-  notes TEXT, duplicate_of TEXT);
+  notes TEXT, duplicate_of TEXT, pack TEXT DEFAULT 'base', src_hash TEXT DEFAULT '', flags TEXT DEFAULT '');
 CREATE TABLE IF NOT EXISTS paras(doc_id TEXT, idx INTEGER, text TEXT, PRIMARY KEY(doc_id, idx));
 CREATE VIRTUAL TABLE IF NOT EXISTS paras_fts USING fts5(text, title, doc_id UNINDEXED, idx UNINDEXED, tokenize='porter unicode61');
 CREATE TABLE IF NOT EXISTS relations(target TEXT, kind TEXT, by_doc TEXT, by_date TEXT, inferred INTEGER);
+CREATE TABLE IF NOT EXISTS packs(pack_id TEXT PRIMARY KEY, path TEXT, event_id TEXT, name TEXT, as_of TEXT, ingested_at REAL,
+  fingerprint TEXT, report TEXT);
 CREATE TABLE IF NOT EXISTS quarantine(doc_id TEXT PRIMARY KEY, file TEXT, reason TEXT);
 CREATE TABLE IF NOT EXISTS para_vecs(doc_id TEXT, idx INTEGER, vec BLOB, PRIMARY KEY(doc_id, idx));
 CREATE TABLE IF NOT EXISTS trade_rows(doc_id TEXT, para INTEGER, route_from TEXT, route_to TEXT, product TEXT,
@@ -98,6 +101,65 @@ def _split_paras(body: str) -> list[str]:
     return [" ".join(p.split()) for p in parts if p.strip()]
 
 
+SUPPORTED = {".txt", ".pdf", ".docx"}
+HEADER_KEYS = {"DOC_ID", "EVENT_ID", "TITLE", "SOURCE_NAME", "SOURCE_TYPE", "RELIABILITY", "PUB_DATE", "PUB_TIME", "COUNTRY", "SECTOR", "LANGUAGE"}
+_MOJIBAKE = re.compile(r"Ã[\x80-\xbf]|â€[™œ\x9d\x93\x94¦“”]|Â[\xa0-\xbf]")
+
+
+def _slug(name: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-") or "pack"
+
+
+def _valid_iso(s: str) -> bool:
+    try:
+        date.fromisoformat(s)
+        return len(s) == 10
+    except ValueError:
+        return False
+
+
+def _split_header(text: str) -> tuple[dict[str, str], str]:
+    """The metadata block at the top of every document (KEY: value lines, ending at '---' or the first prose line)."""
+    header: dict[str, str] = {}
+    lines, start = text.splitlines(), 0
+    for i, line in enumerate(lines):
+        if line.strip() == "---":
+            start = i + 1
+            break
+        hm = _HEADER.match(line.strip())
+        if hm:
+            header[hm.group(1)] = hm.group(2)
+        elif header and line.strip():
+            start = i
+            break
+    return header, "\n".join(lines[start:]).strip()
+
+
+def _repair_text(text: str, note: str) -> tuple[str, str]:
+    """UTF-8 that was read as Windows-1252/Latin-1 ("Ã©" for "é") is repaired when the round trip is clean."""
+    if len(_MOJIBAKE.findall(text)) >= 3:
+        for enc in ("cp1252", "latin-1"):
+            try:
+                fixed = text.encode(enc).decode("utf-8")
+            except (UnicodeEncodeError, UnicodeDecodeError):
+                continue
+            if len(_MOJIBAKE.findall(fixed)) < len(_MOJIBAKE.findall(text)):
+                return fixed, (note + "; " if note else "") + "repaired mojibake (UTF-8 read as Windows-1252)"
+    return text, note
+
+
+def _expected_months(title: str) -> list[tuple[int, int]]:
+    """Months a trade note's title promises: 'July to December 2026' or 'January 2027', plus the same months a year earlier."""
+    m = re.search(r"(\w+) to (\w+) (\d{4})\s*$", title) or re.search(r"()(\w+) (\d{4})\s*$", title)
+    if not m:
+        return []
+    first, last, year = m.group(1).lower() or m.group(2).lower(), m.group(2).lower(), int(m.group(3))
+    if first not in _MONTHS or last not in _MONTHS:
+        return []
+    months = range(_MONTHS[first], _MONTHS[last] + 1)
+    return [(y, mo) for y in (year - 1, year) for mo in months]
+
+
 def _extract(path: Path) -> tuple[str, str]:
     suf = path.suffix.lower()
     if suf == ".txt":
@@ -132,101 +194,277 @@ class LocalCorpus:
         self.db = sqlite3.connect(str(db_path), check_same_thread=False)
         self.db.row_factory = sqlite3.Row
         self.db.executescript(SCHEMA)
-        fp = self._fingerprint()
-        row = self.db.execute("SELECT v FROM meta WHERE k='fingerprint'").fetchone()
-        self.reused = bool(row and row["v"] == fp)
-        if not self.reused:
-            self._ingest(fp)
-        self._load()
+        self._migrate()
         self.embedder = get_embedder()
-        self._ensure_vectors()
+        fp = self._fingerprint(self.dir)
+        row = self.db.execute("SELECT fingerprint FROM packs WHERE pack_id='base'").fetchone()
+        self.reused = bool(row and row["fingerprint"] == fp)
+        if self.reused:
+            self._load()
+            self._ensure_vectors()
+        else:
+            self.ingest_pack(self.dir, "base", replace=True)  # loads and embeds when done
+
+    def _migrate(self) -> None:
+        """Databases written by earlier versions get the new columns in place."""
+        cols = {r["name"] for r in self.db.execute("PRAGMA table_info(docs)")}
+        for name, ddl in (("pack", "TEXT DEFAULT 'base'"), ("src_hash", "TEXT DEFAULT ''"), ("flags", "TEXT DEFAULT ''")):
+            if name not in cols:
+                self.db.execute(f"ALTER TABLE docs ADD COLUMN {name} {ddl}")
+        self.db.commit()
 
     # -- ingestion --------------------------------------------------------------------
-    def _fingerprint(self) -> str:
-        h = hashlib.sha256(PARSER_VERSION.encode() + (self.dir / "manifest.json").read_bytes())
-        for p in sorted((self.dir / "docs").glob("*")):
-            h.update(p.name.encode() + p.read_bytes())
+    @staticmethod
+    def _pack_files(pack_dir: Path) -> dict[str, Path]:
+        """Every readable document file in the pack, by file name. README/checksums/images are pack furniture, not documents."""
+        root = pack_dir / "docs" if (pack_dir / "docs").is_dir() else pack_dir
+        found: dict[str, Path] = {}
+        for p in sorted(root.rglob("*")):
+            if p.is_file() and p.suffix.lower() in SUPPORTED and not re.match(r"(readme|sample_question|manifest|hashes)", p.name, re.I):
+                found.setdefault(p.name, p)
+        return found
+
+    def _fingerprint(self, pack_dir: Path) -> str:
+        h = hashlib.sha256(PARSER_VERSION.encode())
+        mf = pack_dir / "manifest.json"
+        if mf.exists():
+            h.update(mf.read_bytes())
+        for name, p in sorted(self._pack_files(pack_dir).items()):
+            h.update(name.encode() + p.read_bytes())
         return h.hexdigest()
 
-    def _ingest(self, fp: str) -> None:
-        manifest = json.loads((self.dir / "manifest.json").read_text(encoding="utf-8"))
-        with self._lock, self.db:
-            for t in ("docs", "paras", "paras_fts", "relations", "quarantine", "trade_rows", "meta"):
-                self.db.execute(f"DELETE FROM {t}")
-            seen_body: dict[str, str] = {}
-            for m in manifest["documents"]:
-                try:
-                    self._ingest_doc(m, seen_body)
-                except Exception as exc:  # one damaged file must never stop ingestion
-                    self.db.execute("INSERT OR REPLACE INTO quarantine VALUES (?,?,?)",
-                                    (m.get("DOC_ID", "?"), m.get("file", ""), f"{type(exc).__name__}: {exc}"))
-            self._relations()
-            self.db.execute("INSERT INTO meta VALUES ('fingerprint', ?)", (fp,))
-            self.db.execute("INSERT INTO meta VALUES ('pack_as_of', ?)", (manifest.get("as_of", ""),))
+    @staticmethod
+    def _read_manifest(pack_dir: Path, report: dict[str, Any]) -> dict[str, Any]:
+        mf = pack_dir / "manifest.json"
+        if not mf.exists():
+            report["notes"].append("no manifest.json: documents were read from their own headers")
+            return {}
+        try:
+            data = json.loads(mf.read_text(encoding="utf-8-sig"))
+        except (ValueError, OSError) as exc:
+            report["notes"].append(f"manifest.json unreadable ({type(exc).__name__}); documents were read from their own headers")
+            return {}
+        return {"documents": data} if isinstance(data, list) else data
 
-    def _ingest_doc(self, m: dict[str, Any], seen_body: dict[str, str]) -> None:
-        path = self.dir / "docs" / m["file"]
+    def _reconcile(self, manifest: dict[str, Any], files: dict[str, Path], report: dict[str, Any]) -> list[tuple[dict[str, Any], Path]]:
+        """Pair manifest rows with files (tolerating a missing sub-folder) and pick up files the manifest forgot."""
+        entries: list[tuple[dict[str, Any], Path]] = []
+        used: set[str] = set()
+        for m in manifest.get("documents", []):
+            name = Path(str(m.get("file", ""))).name
+            if name in files:
+                used.add(name)
+                entries.append((dict(m), files[name]))
+            else:
+                report["missing_files"].append(m.get("DOC_ID", name))
+                report["quarantined"][m.get("DOC_ID", name)] = f"MISSING_FILE: {m.get('file', '?')} is listed in the manifest but not in the pack"
+        for name, path in files.items():
+            if name not in used:
+                entries.append(({"file": name}, path))  # metadata comes from the document's own header
+                report["off_manifest"].append(name)
+        return entries
+
+    def ingest_pack(self, pack_dir: str | Path, pack_id: str | None = None, replace: bool = False) -> dict[str, Any]:
+        """Add a pack's documents to the corpus WITHOUT touching other packs. Idempotent: unchanged files are skipped.
+        Returns a report of what was ingested, repaired, quarantined, flagged or skipped. Never raises on a bad document."""
+        pack_dir = Path(pack_dir)
+        pack_id = pack_id or _slug(pack_dir.name)
+        report: dict[str, Any] = {"pack_id": pack_id, "path": str(pack_dir), "ingested": 0, "skipped_unchanged": 0, "quarantined": {},
+                                  "repaired": {}, "duplicates": {}, "truncated": {}, "off_manifest": [], "missing_files": [],
+                                  "id_collisions": [], "notes": []}
+        started = time.time()
+        manifest = self._read_manifest(pack_dir, report)
+        files = self._pack_files(pack_dir)
+        entries = self._reconcile(manifest, files, report)
+        report["documents_in_pack"] = len(entries) + len(report["missing_files"])
+        with self._lock, self.db:
+            if replace:
+                for r in self.db.execute("SELECT doc_id FROM docs WHERE pack=?", (pack_id,)).fetchall():
+                    self._delete_doc(r["doc_id"])
+            for meta, path in entries:
+                try:
+                    self._ingest_doc(meta, path, pack_id, report)
+                except Exception as exc:  # one damaged file must never stop ingestion
+                    doc_id = meta.get("DOC_ID") or path.stem
+                    self.db.execute("INSERT OR REPLACE INTO quarantine VALUES (?,?,?)", (doc_id, path.name, f"{type(exc).__name__}: {exc}"))
+                    report["quarantined"][doc_id] = f"{type(exc).__name__}: {exc}"
+            for doc_id, reason in report["quarantined"].items():
+                self.db.execute("INSERT OR REPLACE INTO quarantine VALUES (?,?,?)", (doc_id, "", reason))
+            self._post_ingest()
+            as_of = manifest.get("as_of") or ""
+            if as_of:
+                self.db.execute("INSERT OR REPLACE INTO meta VALUES ('pack_as_of', ?)", (as_of,))
+            self.db.execute("INSERT OR REPLACE INTO packs VALUES (?,?,?,?,?,?,?,?)",
+                            (pack_id, str(pack_dir), manifest.get("event_id", ""), manifest.get("name", ""), as_of, time.time(),
+                             self._fingerprint(pack_dir), "{}"))
+        self._load()
+        self._ensure_vectors()
+        report["trade"] = self.trade_quality(pack_id)
+        report["seconds"] = round(time.time() - started, 2)
+        for d in self.docs.values():
+            if d["pack"] == pack_id:
+                if d["duplicate_of"]:
+                    report["duplicates"][d["doc_id"]] = d["duplicate_of"]
+                if "TRUNCATED" in (d["flags"] or ""):
+                    report["truncated"][d["doc_id"]] = d["flags"]
+                if d["notes"] and "repaired" in d["notes"]:
+                    report["repaired"][d["doc_id"]] = d["notes"]
+        with self._lock, self.db:
+            self.db.execute("UPDATE packs SET report=? WHERE pack_id=?", (json.dumps(report), pack_id))
+        return report
+
+    def _delete_doc(self, doc_id: str) -> None:
+        for t in ("docs", "paras", "para_vecs", "trade_rows", "quarantine"):
+            self.db.execute(f"DELETE FROM {t} WHERE doc_id=?", (doc_id,))
+        self.db.execute("DELETE FROM paras_fts WHERE doc_id=?", (doc_id,))
+
+    def _ingest_doc(self, m: dict[str, Any], path: Path, pack_id: str, report: dict[str, Any]) -> None:
+        raw_hash = hashlib.sha256(path.read_bytes()).hexdigest()
         text, note = _extract(path)
+        text, note = _repair_text(text, note)
         if len(text.strip()) < 40:
             raise ValueError("empty or unreadable document")
-        header: dict[str, str] = {}
-        lines, start = text.splitlines(), 0
-        for i, line in enumerate(lines):
-            if line.strip() == "---":
-                start = i + 1
-                break
-            hm = _HEADER.match(line.strip())
-            if hm:
-                header[hm.group(1)] = hm.group(2)
-            elif header and line.strip():
-                start = i
-                break
-        body = "\n".join(lines[start:]).strip()
-        conflicts = [k for k in ("EVENT_ID", "PUB_DATE", "RELIABILITY") if header.get(k) and str(m.get(k)) != header[k]]
+        header, body = _split_header(text)
+        meta = {**{k: v for k, v in header.items() if k in HEADER_KEYS}, **{k: v for k, v in m.items() if v not in (None, "")}}
+        conflicts = [k for k in ("EVENT_ID", "PUB_DATE", "RELIABILITY") if header.get(k) and str(m.get(k, header[k])) != header[k]]
         if conflicts:
             note = (note + "; " if note else "") + f"header/manifest conflict on {','.join(conflicts)}"
+        doc_id = meta.get("DOC_ID")
+        if not doc_id:
+            raise ValueError("no document ID in the manifest or the document header")
+        if not _valid_iso(str(meta.get("PUB_DATE", ""))):
+            raise ValueError(f"missing or invalid publication date {meta.get('PUB_DATE')!r} (must be YYYY-MM-DD)")
+        existing = self.db.execute("SELECT src_hash, pack FROM docs WHERE doc_id=?", (doc_id,)).fetchone()
+        if existing and existing["src_hash"] == raw_hash:
+            report["skipped_unchanged"] += 1
+            return
+        if existing:
+            if existing["pack"] != pack_id:
+                report["id_collisions"].append(f"{doc_id}: already in pack {existing['pack']}; replaced by this pack's different content")
+            self._delete_doc(doc_id)
         paras = _split_paras(body)
-        digest = hashlib.sha256(_norm(body).encode()).hexdigest()
-        dup = seen_body.get(digest)
-        seen_body.setdefault(digest, m["DOC_ID"])
-        fmt = m.get("FORMAT") or path.suffix.lstrip(".").upper()
+        fmt = meta.get("FORMAT") or path.suffix.lstrip(".").upper()
+        title = meta.get("TITLE", "")
         self.db.execute(
-            "INSERT INTO docs VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-            (m["DOC_ID"], m.get("EVENT_ID", "NONE"), m.get("TITLE", ""), m.get("SOURCE_NAME", ""), m.get("SOURCE_TYPE", ""),
-             int(m.get("RELIABILITY") or 4), m["PUB_DATE"], m.get("PUB_TIME", ""), m.get("COUNTRY", ""), m.get("SECTOR", ""),
-             fmt, m["file"], body, note, dup))
+            "INSERT INTO docs(doc_id,event_id,title,outlet,source_type,tier,date,time,country,sector,format,file,body,notes,duplicate_of,pack,src_hash,flags) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (doc_id, meta.get("EVENT_ID", "NONE"), title, meta.get("SOURCE_NAME", ""), meta.get("SOURCE_TYPE", ""),
+             int(meta.get("RELIABILITY") or 4), meta["PUB_DATE"], meta.get("PUB_TIME", ""), meta.get("COUNTRY", ""), meta.get("SECTOR", ""),
+             fmt, path.name, body, note, None, pack_id, raw_hash, ""))
+        self.db.execute("DELETE FROM quarantine WHERE doc_id=?", (doc_id,))
         for i, p in enumerate(paras):
-            self.db.execute("INSERT INTO paras VALUES (?,?,?)", (m["DOC_ID"], i, p))
-            self.db.execute("INSERT INTO paras_fts(text,title,doc_id,idx) VALUES (?,?,?,?)", (p, m.get("TITLE", ""), m["DOC_ID"], i))
-        if m.get("SOURCE_TYPE") == "trade_note":
-            self._trade_rows(m["DOC_ID"], m.get("TITLE", ""), paras)
+            self.db.execute("INSERT INTO paras VALUES (?,?,?)", (doc_id, i, p))
+            self.db.execute("INSERT INTO paras_fts(text,title,doc_id,idx) VALUES (?,?,?,?)", (p, title, doc_id, i))
+        if meta.get("SOURCE_TYPE") == "trade_note":
+            self._trade_rows(doc_id, title, paras)
+        report["ingested"] += 1
 
     def _trade_rows(self, doc_id: str, title: str, paras: list[str]) -> None:
+        """One row per month line. A row that cannot be trusted is stored WITH its reason and is never used for numbers."""
         rm = _TITLE_ROUTE.search(title)
         src, dst, product = (rm.group(1), rm.group(2), rm.group(3).lower()) if rm else ("?", "?", "?")
-        seen: set[tuple[int, int]] = set()
+        seen: dict[tuple[int, int], tuple[int, float | None, float | None]] = {}
+        rows: list[list[Any]] = []
         for i, p in enumerate(paras):
             ym = _ROW_START.match(p)
             if not ym:
                 continue
+            anchor = re.match(r"\[P(\d+)\]", p)
+            row_no = int(anchor.group(1)) if anchor else i + 1  # the row number is the [P#] anchor printed in the document
             mm = _ROW.search(p)
             if not mm or mm.group(1).lower() not in _MONTHS:
-                self.db.execute("INSERT INTO trade_rows VALUES (?,?,?,?,?,?,?,?,?,?)",
-                                (doc_id, i + 1, src, dst, product, int(ym.group(2)), _MONTHS.get(ym.group(1).lower(), 0),
-                                 None, None, "UNPARSEABLE_ROW"))
+                rows.append([doc_id, row_no, src, dst, product, int(ym.group(2)), _MONTHS.get(ym.group(1).lower(), 0), None, None, "UNPARSEABLE_ROW"])
                 continue
             month, year = _MONTHS[mm.group(1).lower()], int(mm.group(2))
             try:
-                value, vol = float(mm.group(3).replace(",", "")), float(mm.group(4).replace(",", ""))
-                quality = "ok"
+                value, vol, quality = float(mm.group(3).replace(",", "")), float(mm.group(4).replace(",", "")), "ok"
+                if value <= 0 or vol <= 0:
+                    quality = "BAD_NUMBER"
             except ValueError:
                 value = vol = None  # type: ignore[assignment]
                 quality = "BAD_NUMBER"
             if (year, month) in seen:
                 quality = "DUPLICATE_ROW"
-            seen.add((year, month))
-            self.db.execute("INSERT INTO trade_rows VALUES (?,?,?,?,?,?,?,?,?,?)",
-                            (doc_id, i + 1, src, dst, product, year, month, value, vol, quality))
+                first = seen[(year, month)]
+                if (first[1], first[2]) != (value, vol):  # a repeated month with different numbers: neither can be trusted
+                    rows[first[0]][9] = "CONFLICTING_ROW"
+                    quality = "CONFLICTING_ROW"
+            else:
+                seen[(year, month)] = (len(rows), value, vol)
+            rows.append([doc_id, row_no, src, dst, product, year, month, value, vol, quality])
+        # a mistyped digit shows up as an implausible unit price (USD per tonne) against the table's own median
+        prices = sorted(r[7] * 1e6 / r[8] for r in rows if r[9] == "ok" and r[7] and r[8])
+        if len(prices) >= 4:
+            med = prices[len(prices) // 2]
+            for r in rows:
+                if r[9] == "ok" and r[7] and r[8] and not (med / 3 <= r[7] * 1e6 / r[8] <= med * 3):
+                    r[9] = "PRICE_OUTLIER"
+        self.db.executemany("INSERT INTO trade_rows VALUES (?,?,?,?,?,?,?,?,?,?)", rows)
+
+    def _post_ingest(self) -> None:
+        """Whole-corpus passes after any ingest: duplicates, truncated copies, damage flags, retraction links."""
+        rows = self.db.execute("SELECT doc_id,date,body,notes FROM docs").fetchall()
+        norm = {r["doc_id"]: _norm(r["body"]) for r in rows}
+        date_of = {r["doc_id"]: r["date"] for r in rows}
+        self.db.execute("UPDATE docs SET duplicate_of=NULL, flags=''")
+        flags: dict[str, set[str]] = {r["doc_id"]: set() for r in rows}
+        dup: dict[str, str] = {}
+        canon: dict[str, str] = {}
+        for r in sorted(rows, key=lambda r: (r["date"], r["doc_id"])):
+            h = hashlib.sha256(norm[r["doc_id"]].encode()).hexdigest()
+            if h in canon:
+                dup[r["doc_id"]] = canon[h]
+            else:
+                canon[h] = r["doc_id"]
+        for a in rows:
+            ida, na = a["doc_id"], norm[a["doc_id"]]
+            if ida in dup:
+                continue
+            core = na.rsplit(" ", 1)[0] if len(na) >= 120 else ""
+            for b in rows:
+                idb = b["doc_id"]
+                if idb != ida and core and len(norm[idb]) > len(na) and norm[idb].startswith(core):
+                    flags[ida].add("TRUNCATED_COPY")
+                    if date_of[idb] <= date_of[ida]:
+                        dup[ida] = idb  # a cut-off copy of a document we already have in full
+                    break
+            if not re.search(r"[.!?\"'”’)\]]\s*$", a["body"].strip()):
+                flags[ida].add("POSSIBLY_TRUNCATED")
+            if a["body"].count("�") > 0.005 * max(len(a["body"]), 1):
+                flags[ida].add("ENCODING_DAMAGED")
+        for doc_id, f in flags.items():
+            self.db.execute("UPDATE docs SET flags=?, duplicate_of=? WHERE doc_id=?", (",".join(sorted(f)), dup.get(doc_id), doc_id))
+        self._relations()
+
+    def trade_quality(self, pack_id: str | None = None) -> dict[str, Any]:
+        """Per-table damage report: rows excluded (with why) and months the table should have but does not (a cut-off table)."""
+        with self._lock:
+            docs = self.db.execute("SELECT doc_id,title FROM docs WHERE source_type='trade_note'" + (" AND pack=?" if pack_id else ""),
+                                   (pack_id,) if pack_id else ()).fetchall()
+            out: dict[str, Any] = {"tables": len(docs), "rows_ok": 0, "rows_flagged": [], "incomplete_tables": []}
+            for d in docs:
+                rows = self.db.execute("SELECT para,year,month,quality FROM trade_rows WHERE doc_id=?", (d["doc_id"],)).fetchall()
+                out["rows_ok"] += sum(1 for r in rows if r["quality"] == "ok")
+                out["rows_flagged"] += [{"doc_id": d["doc_id"], "row": r["para"], "period": f"{r['year']}-{r['month']:02d}", "reason": r["quality"]}
+                                        for r in rows if r["quality"] != "ok"]
+                have = {(r["year"], r["month"]) for r in rows if r["quality"] == "ok"}
+                missing = [f"{y}-{m:02d}" for y, m in _expected_months(d["title"]) if (y, m) not in have]
+                if missing:
+                    out["incomplete_tables"].append({"doc_id": d["doc_id"], "missing_months": missing})
+            return out
+
+    def is_current(self, pack_dir: str | Path, pack_id: str) -> bool:
+        """True if this pack was already ingested and its files have not changed since."""
+        with self._lock:
+            row = self.db.execute("SELECT fingerprint FROM packs WHERE pack_id=?", (pack_id,)).fetchone()
+        return bool(row and row["fingerprint"] == self._fingerprint(Path(pack_dir)))
+
+    def list_packs(self) -> list[dict[str, Any]]:
+        with self._lock:
+            rows = self.db.execute("SELECT * FROM packs ORDER BY ingested_at").fetchall()
+            counts = {r["pack"]: r["n"] for r in self.db.execute("SELECT pack, COUNT(*) AS n FROM docs GROUP BY pack")}
+        return [{"pack_id": r["pack_id"], "event_id": r["event_id"], "name": r["name"], "as_of": r["as_of"], "ingested_at": r["ingested_at"],
+                 "documents": counts.get(r["pack_id"], 0), "report": json.loads(r["report"] or "{}")} for r in rows]
 
     def _relations(self) -> None:
         """A correction/retraction names its targets by doc ID or (as in E5) only by the date it states.
@@ -268,22 +506,24 @@ class LocalCorpus:
 
     # -- semantic vectors --------------------------------------------------------------
     def _ensure_vectors(self) -> None:
-        """Embed every paragraph once (title + text). Re-embeds if the embedder changed or the pack was re-ingested."""
+        """Embed each paragraph once (title + text). Only paragraphs without a vector are embedded, so ingesting a live pack
+        costs seconds, not a full re-embed. Everything is re-embedded only if the embedder itself changed."""
         with self._lock:
             row = self.db.execute("SELECT v FROM meta WHERE k='embed_backend'").fetchone()
-            have = self.db.execute("SELECT COUNT(*) FROM para_vecs").fetchone()[0]
-            total = self.db.execute("SELECT COUNT(*) FROM paras").fetchone()[0]
-            if not (row and row["v"] == self.embedder.name and have == total and total):
-                keys, texts = [], []
-                for d in self.docs.values():
-                    for i, p in enumerate(d["paras"]):
-                        keys.append((d["doc_id"], i))
-                        texts.append(f"{d['title']}. {_ANCHOR.sub('', p)}"[:1500])
-                vecs = self.embedder.encode_docs(texts) if texts else []
+            if not (row and row["v"] == self.embedder.name):
+                self.db.execute("DELETE FROM para_vecs")
+            have = {(r["doc_id"], r["idx"]) for r in self.db.execute("SELECT doc_id, idx FROM para_vecs")}
+            want = {(d["doc_id"], i) for d in self.docs.values() for i in range(len(d["paras"]))}
+            keys = sorted(want - have)
+            if keys:
+                texts = [f"{self.docs[k[0]]['title']}. {_ANCHOR.sub('', self.docs[k[0]]['paras'][k[1]])}"[:1500] for k in keys]
+                vecs = self.embedder.encode_docs(texts)
                 with self.db:
-                    self.db.execute("DELETE FROM para_vecs")
-                    self.db.executemany("INSERT INTO para_vecs VALUES (?,?,?)", [(k[0], k[1], v.tobytes()) for k, v in zip(keys, vecs)])
-                    self.db.execute("INSERT OR REPLACE INTO meta VALUES ('embed_backend', ?)", (self.embedder.name,))
+                    self.db.executemany("INSERT OR REPLACE INTO para_vecs VALUES (?,?,?)", [(k[0], k[1], v.tobytes()) for k, v in zip(keys, vecs)])
+            with self.db:
+                for k in have - want:  # paragraphs of documents that were replaced or removed
+                    self.db.execute("DELETE FROM para_vecs WHERE doc_id=? AND idx=?", k)
+                self.db.execute("INSERT OR REPLACE INTO meta VALUES ('embed_backend', ?)", (self.embedder.name,))
             self._vecs: list[tuple[str, int, array]] = []
             for r in self.db.execute("SELECT doc_id, idx, vec FROM para_vecs"):
                 a = array("f")
@@ -298,7 +538,8 @@ class LocalCorpus:
                     "trade_rows_flagged": q("SELECT COUNT(*) FROM trade_rows WHERE quality!='ok'"),
                     "relations": q("SELECT COUNT(*) FROM relations"), "quarantined": len(self.quarantine),
                     "duplicates": q("SELECT COUNT(*) FROM docs WHERE duplicate_of IS NOT NULL"),
-                    "encoding_repairs": q("SELECT COUNT(*) FROM docs WHERE notes LIKE '%encoding%'"),
+                    "encoding_repairs": q("SELECT COUNT(*) FROM docs WHERE notes LIKE '%repaired%' OR notes LIKE '%encoding%'"),
+                    "truncated": q("SELECT COUNT(*) FROM docs WHERE flags LIKE '%TRUNCATED%'"), "packs": q("SELECT COUNT(*) FROM packs"),
                     "embeddings": len(self._vecs), "embed_backend": self.embedder.name, "reused_existing_db": self.reused}
 
     # -- helpers ------------------------------------------------------------------------
@@ -307,12 +548,14 @@ class LocalCorpus:
         cor = [r for r in d["corrected_by"] if r["date"] <= as_of]
         flags = (["RETRACTED"] if ret else []) + (["CORRECTED"] if cor else []) + (["LOW_RELIABILITY_TIER4"] if d["tier"] >= 4 else []) \
             + ([f"DUPLICATE_OF_{d['duplicate_of']}"] if d["duplicate_of"] else []) \
-            + (["ENCODING_REPAIRED"] if "encoding" in (d["notes"] or "") else [])
+            + (["ENCODING_REPAIRED"] if "repaired" in (d["notes"] or "") or "encoding" in (d["notes"] or "") else []) \
+            + [f for f in (d.get("flags") or "").split(",") if f]
         return {"flags": flags, "retracted_by": ret, "corrected_by": cor}
 
     def _meta(self, d: dict[str, Any], as_of: str) -> dict[str, Any]:
         return {"doc_id": d["doc_id"], "title": d["title"], "outlet": d["outlet"], "source_type": d["source_type"], "tier": d["tier"],
-                "date": d["date"], "event_id": d["event_id"], "country": d["country"], "sector": d["sector"], **self._status(d, as_of)}
+                "date": d["date"], "time": d["time"], "event_id": d["event_id"], "country": d["country"], "sector": d["sector"], "pack": d.get("pack", "base"),
+                **self._status(d, as_of)}
 
     # -- tool dispatch ----------------------------------------------------------------
     def call(self, name: str, args: dict[str, Any]) -> Any:
@@ -467,8 +710,12 @@ class LocalCorpus:
                  "volume_t": r["volume_t"], "quality": r["quality"]}
                 for r in self.db.execute("SELECT * FROM trade_rows WHERE doc_id=? ORDER BY year, month", (table_id,))]
         bad = [r for r in rows if r["quality"] != "ok"]
-        return {**self._meta(d, as_of), **self._route(d), "rows": rows,
-                "warning": f"{len(bad)} damaged row(s) flagged; do NOT use them" if bad else None,
+        have = {(int(r["period"][:4]), int(r["period"][5:])) for r in rows if r["quality"] == "ok"}
+        missing = [f"{y}-{m:02d}" for y, m in _expected_months(d["title"]) if (y, m) not in have]
+        warn = ([f"{len(bad)} damaged row(s) flagged ({', '.join(sorted({r['quality'] for r in bad}))}); do NOT use them"] if bad else []) \
+            + ([f"table is incomplete: no usable row for {', '.join(missing)}; do not extrapolate them"] if missing else [])
+        return {**self._meta(d, as_of), **self._route(d), "rows": rows, "missing_months": missing,
+                "warning": "; ".join(warn) or None,
                 "cite_as": "table ID + row number (the [P#] anchor of the row)"}
 
     def t_trade_stats(self, table_id: str, as_of: str) -> dict[str, Any]:
@@ -491,6 +738,75 @@ class LocalCorpus:
                 "last3_avg_volume_change_pct": avg("volume_change_pct"), "last3_avg_value_change_pct": avg("value_change_pct"),
                 "excluded_damaged_rows": [r["row"] for r in t["rows"] if r["quality"] != "ok"]}
 
+    def t_import_summary(self, country: str, product: str, as_of: str) -> dict[str, Any]:
+        """Net exposure anchor: a country's TOTAL imports of a product from every origin in the trade tables, month by month and
+        year on year, with the loss on affected routes and the gain on substitute routes broken out. Damaged rows are excluded and a
+        month missing a usable row on any origin is left out of the totals (marked incomplete) instead of faking a drop."""
+        tables = []
+        for d in self.docs.values():
+            if d["source_type"] != "trade_note" or d["date"] > as_of or d["duplicate_of"]:
+                continue
+            m = _TITLE_ROUTE.search(d["title"])
+            if m and m.group(2).lower() == country.lower() and m.group(3).lower() == product.lower():
+                tables.append((d, m.group(1)))
+        if not tables:
+            return {"error": "NO_TABLES", "detail": f"no trade table into {country} for {product} dated on or before {as_of}"}
+        cells: dict[str, dict[tuple[int, int], dict[str, Any]]] = {}
+        sources: dict[str, dict[str, Any]] = {}
+        for d, origin in sorted(tables, key=lambda t: (t[0]["date"], t[0]["doc_id"])):  # a later table for the same origin wins
+            sources[origin] = {"origin": origin, "table_id": d["doc_id"], "tier": d["tier"], "date": d["date"]}
+            for r in self.db.execute("SELECT para,year,month,value_usd_m,volume_t FROM trade_rows WHERE doc_id=? AND quality='ok'", (d["doc_id"],)):
+                cells.setdefault(origin, {})[(r["year"], r["month"])] = {"row": r["para"], "vol": r["volume_t"], "val": r["value_usd_m"], "table": d["doc_id"]}
+        origins = sorted(cells)
+        latest_year = max(y for o in cells.values() for y, _ in o)
+        months = sorted({(y, m) for o in cells.values() for y, m in o if y == latest_year})
+        out_months, excluded = [], []
+        for y, m in months:
+            per, ok = {}, True
+            for o in origins:
+                cur, prev = cells[o].get((y, m)), cells[o].get((y - 1, m))
+                if not cur or not prev:
+                    ok = False
+                    excluded.append(f"{y}-{m:02d}: {o} has no usable row for {'this month' if not cur else 'the same month last year'}")
+                    break
+                per[o] = {"volume_t": cur["vol"], "prior_volume_t": prev["vol"], "value_usd_m": cur["val"], "prior_value_usd_m": prev["val"],
+                          "change_pct": round(100 * (cur["vol"] / prev["vol"] - 1), 1), "value_change_pct": round(100 * (cur["val"] / prev["val"] - 1), 1),
+                          "row": cur["row"], "prior_row": prev["row"], "table_id": cur["table"]}
+            if not ok:
+                out_months.append({"period": f"{y}-{m:02d}", "complete": False})
+                continue
+            tv, pv = sum(x["volume_t"] for x in per.values()), sum(x["prior_volume_t"] for x in per.values())
+            tval, pval = sum(x["value_usd_m"] for x in per.values()), sum(x["prior_value_usd_m"] for x in per.values())
+            out_months.append({"period": f"{y}-{m:02d}", "complete": True, "total_volume_t": tv, "prior_volume_t": pv,
+                               "volume_change_pct": round(100 * (tv / pv - 1), 1), "total_value_usd_m": round(tval, 1), "prior_value_usd_m": round(pval, 1),
+                               "value_change_pct": round(100 * (tval / pval - 1), 1), "by_origin": per})
+        full = [m for m in out_months if m["complete"]]
+        # the break: the first month in which any origin's volume is 25% or more below last year
+        brk = next((m for m in full if any(v["change_pct"] <= -25 for v in m["by_origin"].values())), None)
+
+        def window(ms: list[dict[str, Any]]) -> dict[str, Any] | None:
+            if not ms:
+                return None
+            tv, pv = sum(m["total_volume_t"] for m in ms), sum(m["prior_volume_t"] for m in ms)
+            tval, pval = sum(m["total_value_usd_m"] for m in ms), sum(m["prior_value_usd_m"] for m in ms)
+            lost: dict[str, float] = {}
+            gained: dict[str, float] = {}
+            for o in origins:
+                delta = sum(m["by_origin"][o]["volume_t"] - m["by_origin"][o]["prior_volume_t"] for m in ms)
+                (lost if delta < 0 else gained)[o] = round(delta)
+            gross = -sum(lost.values())
+            return {"from": ms[0]["period"], "to": ms[-1]["period"], "months": len(ms), "net_volume_change_pct": round(100 * (tv / pv - 1), 1),
+                    "net_value_change_pct": round(100 * (tval / pval - 1), 1), "net_volume_change_t": round(tv - pv),
+                    "lost_volume_t_by_origin": lost, "gained_volume_t_by_origin": gained,
+                    "substitution_offset_pct_of_loss": round(100 * sum(gained.values()) / gross, 1) if gross else None}
+
+        return {"country": country, "product": product.lower(), "latest_year": latest_year, "origins": list(sources.values()), "months": out_months,
+                "windows": {"whole_period": window(full), "since_break": window([m for m in full if brk and m["period"] >= brk["period"]]),
+                            "last_3_months": window(full[-3:])},
+                "break_month": brk["period"] if brk else None, "excluded": excluded,
+                "how_to_cite": "cite each origin's table ID and row number from by_origin (row, prior_row)",
+                "note": "net = change in TOTAL imports from all origins; the loss on affected routes and the substitution on others are in lost/gained"}
+
     def t_get_reference(self, kind: str, name: str = "") -> dict[str, Any]:
         q = _tok(f"{kind} {name}")
         hits = [d for d in self.docs.values() if d["source_type"] == "atlas"
@@ -499,7 +815,9 @@ class LocalCorpus:
 
     def t_list_events(self, as_of: str) -> dict[str, Any]:
         ev = Counter(d["event_id"] for d in self.docs.values() if d["date"] <= as_of)
-        return {"results": [{"event_id": e, "documents": n, "note": "background, no event" if e == "NONE" else ""} for e, n in ev.items()]}
+        names = {r["event_id"]: r["name"] for r in self.db.execute("SELECT event_id, name FROM packs WHERE event_id != ''")}
+        return {"results": [{"event_id": e, "name": names.get(e, ""), "documents": n,
+                             "note": "background, no event" if e == "NONE" else ""} for e, n in ev.items()]}
 
     def t_event_profile(self, event_id: str, as_of: str) -> dict[str, Any]:
         docs = [d for d in self.docs.values() if d["event_id"].lower() == event_id.lower()]
@@ -533,7 +851,7 @@ class LocalCorpus:
             matched = sum(b.size for b in SequenceMatcher(None, qt, bt, autojunk=False).get_matching_blocks())
             if not qt or matched / len(qt) < 0.9:
                 return {"valid": False, "reason": "quote not found in document"}
-        return {"valid": True, "date": d["date"], "tier": d["tier"], "flags": st["flags"]}
+        return {"valid": True, "date": d["date"], "time": d["time"], "tier": d["tier"], "flags": st["flags"]}
 
     def t_compute_exposure(self, route_share: float, severity: float, duration_months: float, reroute_offset: float) -> dict[str, Any]:
         """exposure % = 100 x route_share x severity x min(duration/3, 1) x (1 - reroute_offset); inputs are fractions in [0,1]."""

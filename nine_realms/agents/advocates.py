@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import Any
 
 from ..models import Attack, CaseFile, Claim, Estimate, Evidence, Response
-from ..debate import ATTACK_KINDS, INTEGRITY_KINDS, audit_claim, best_tier, is_relevant
+from ..debate import ATTACK_KINDS, INTEGRITY_KINDS, _tokens, audit_claim, best_tier, is_relevant
 from .base import Agent, parse_evidence
 
 
@@ -26,6 +26,18 @@ class Advocate(Agent):
     def opponent(self) -> str:
         return "LOKI" if self.side == "THOR" else "THOR"
 
+    def _repeats_conceded_claim(self, case: CaseFile, claim: Claim) -> dict[str, Any] | None:
+        """A claim that restates one this agent conceded earlier in THIS case, citing no document it has not already cited."""
+        key = f"{claim.estimate.country}/{claim.estimate.sector}" if claim.estimate else ""
+        words = _tokens(claim.text)
+        for m in self.memory.items(f"conceded;case={case.case_id};"):
+            tags = dict(t.split("=", 1) for t in m["tags"].split(";") if "=" in t)
+            old = _tokens(m["text"].split("::", 1)[-1])
+            if tags.get("key", "") == key and words and old and len(words & old) / len(words | old) >= 0.55 \
+                    and claim.doc_ids() <= set(filter(None, tags.get("docs", "").split(","))):
+                return m
+        return None
+
     # -- Round 1 -------------------------------------------------------------------
     def submit(self, case: CaseFile, run: int, deficiencies: list[str]) -> list[Claim]:
         n_before = len(self.queries)
@@ -39,6 +51,7 @@ class Advocate(Agent):
             if not isinstance(raw, list) or not raw:
                 raise ValueError('"claims" must be a non-empty list')
             out: list[Claim] = []
+            suppressed = 0
             for item in raw[:cap]:
                 text, kind = str(item.get("text", "")).strip(), item.get("kind")
                 if not text or kind not in ("fact", "inference"):
@@ -52,8 +65,17 @@ class Advocate(Agent):
                     est = Estimate.from_dict(item["estimate"], case.unit)
                     if est.key not in case.scope:
                         raise ValueError(f"estimate {est.key} is outside the case scope {case.scope}")
-                out.append(Claim(f"R{run}-{self.side[0]}{len(out) + 1}", self.side, run, text, kind, ev, est,
-                                 float(item.get("confidence", 0.5))))
+                claim = Claim(f"R{run}-{self.side[0]}{len(out) + 1}", self.side, run, text, kind, ev, est, float(item.get("confidence", 0.5)))
+                memory_hit = self._repeats_conceded_claim(case, claim)
+                if memory_hit:  # memory changes what this agent does: it does not re-argue what it already gave up
+                    self.bus.emit("memory_influence", agent=self.name, run=run, phase="round1", kind="suppressed_repeat_of_conceded_claim",
+                                  memory_ids=[memory_hit["id"]], suppressed_claim=text[:140], memory=memory_hit["text"][:160])
+                    suppressed += 1
+                    continue
+                out.append(claim)
+            if not out and suppressed:
+                raise ValueError("every claim you submitted repeats a claim you conceded earlier in this case, with no new document. "
+                                 "Bring a different claim, or the same claim with NEW evidence.")
             if not out:
                 raise ValueError("none of your claims had valid evidence; cite documents you retrieved, with exact quotes")
             if run > 1 and not any(c.doc_ids() - used_docs for c in out):

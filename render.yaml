@@ -35,5 +35,7 @@ services:
         value: "10"
       - key: TRIAL_COOLDOWN_SECONDS
         value: "60"
+      - key: MAX_CONCURRENT_TRIALS  # raise to 2-3 on race day if you run several packs at once (needs LLM rate headroom)
+        value: "1"
       - key: LOG_LEVEL
         value: info

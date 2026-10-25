@@ -218,6 +218,7 @@ class Thing:
             return None
         for r in judged.rulings:
             case.rulings[r.claim_id] = r  # latest ruling is the effective one
+        self._remember_run(case, run)
         rec.rulings = judged.rulings
         case.ranges = self._normalise_ranges(case, judged)
         return judged
@@ -240,6 +241,19 @@ class Thing:
                 if rng.low > rng.high:
                     rng.low, rng.high = lo, hi
         return judged.ranges
+
+    def _remember_run(self, case: CaseFile, run: int) -> None:
+        """Each advocate remembers what it conceded in this run, so the next run of the same case does not re-argue it."""
+        by_claim = {a.target_claim_id: case.responses.get(a.id) for a in case.attacks.values()}
+        for c in case.claims.values():
+            if c.run != run or c.status != "conceded":
+                continue
+            agent = self.advocates[c.side]
+            why = (by_claim.get(c.id).text if by_claim.get(c.id) else "")[:140]
+            key = f"{c.estimate.country}/{c.estimate.sector}" if c.estimate else ""
+            mid = agent.memory.add(f"Run {run} conceded ({why}) :: {c.text}", case_id=case.case_id, knowledge_date=case.as_of, kind="fact",
+                                   tags=f"conceded;case={case.case_id};key={key};docs={','.join(sorted(c.doc_ids()))}")
+            self.bus.emit("memory_write", agent=agent.name, memory_id=mid, text=f"conceded in run {run}: {c.text[:120]}", when="after_run")
 
     def _checklist(self, case: CaseFile, rec: RunRecord, judged: JudgeResult) -> list[str]:
         """Deterministic sufficiency checks. These can only make Odin stricter, never looser."""

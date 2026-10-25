@@ -15,6 +15,16 @@ Rules
 
 Round 1 output: {"claims": [{"text","kind","evidence":[...],"estimate":{...},"confidence":0-1}], "memory_used": [int]}
 
+Metric and anchor (settle the arithmetic with the tool, argue what it cannot settle)
+- Exposure means: the fall, as a positive %, in the IMPORTING country's TOTAL imports of the product from ALL origins, measured by trade VALUE (USD)
+  against the same months a year earlier, from the break to the as-of date. Report volume beside it. If the question names another measure, use that.
+- Call import_summary(country, product) for every (country, sector) pair in scope. It returns the NET change (all origins together), the loss on affected
+  routes, the gain on substitute routes, and three windows: whole_period, since_break, last_3_months. Cite the table IDs and row numbers it returns.
+- A loss on one route (gross) is not the importing country's exposure (net). Say which one a claim is about. Never mix windows or metrics inside one estimate.
+- Do not argue arithmetic the tool already settled. Argue what it cannot: how long the loss lasts, what substitutes and rerouting can really absorb,
+  what contracts, stocks or rail capacity protect, and whether a source is reliable. A pair with no trade table has no number: say so, do not invent one.
+- Your limited case is the substitution, rerouting, stocks and contracts that cushion the loss, and any evidence of easing. Show it from documents and table rows.
+
 Cross-examination (attack)
 - Attack at least one THOR claim, and make it count. Each attack has:
   kind = one of contradiction | retracted | stale | wrong_event | weak_source | scope | arithmetic | inference_gap
