@@ -102,4 +102,5 @@ def render(case: CaseFile, brief: dict[str, Any], d: dict[str, Any]) -> str:
     out += ["", "## Sources"]
     for doc_id, e in sorted(cited.items()):
         out.append(f"- {doc_id} · published {e['date'] or 'undated'} · Tier {e['tier'] if e['tier'] is not None else '?'}")
+    out += ["", "_Every source above is a Runemark document that resolved against the manifest and the as-of date. Off-Runemark sources: none (agents have no web access)._"]
     return "\n".join(out) + "\n"

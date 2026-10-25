@@ -13,7 +13,45 @@ Ask a question about a disruption in **Runemark**. Four Norse agents build the c
 
 ---
 
-## Architecture
+## Run it: the working system (`nine_realms/`)
+
+The build that is tested end to end, containerised and used for the demo is the Python package `nine_realms/` with its dashboard (`index.html`, `app.js`).
+It has no build step. `backend/` and `frontend/` (FastAPI + React) are the original spec-first scaffold described in `docs/`; they are not needed to run the demo.
+
+```bash
+git clone https://github.com/parthtiwaskar/ragnarok_iit_Astral_walkers && cd ragnarok_iit_Astral_walkers
+pip install -r requirements-nine-realms.txt
+cp .env.example .env              # add ONE key: DEEPSEEK_API_KEY, ANTHROPIC_API_KEY or OPENAI_API_KEY (set NINE_REALMS_PROVIDER if several)
+python -m nine_realms.server      # http://127.0.0.1:8765  (first start ingests data/runemark into data/ragnarisk.sqlite)
+```
+
+Open the dashboard, ask a question on the **Ask** screen and choose **Full trial** (two runs, with Odin's remand). *Fast answer* is one run and is meant for quick questions.
+Browsing the corpus and saved cases needs no key.
+
+| Task | How |
+|---|---|
+| Add a new event pack **live**, no code change, no restart | Evidence page, Data intake, *Upload pack (.zip)*; or `POST /api/ingest` (zip body); or drop a folder or zip into `data/live_packs/` |
+| Ask with a simulated clock | Write it in the question ("As of 25 January 2027, ..."); the date is read from the text |
+| Check a case against the 10 minimum criteria | `python -m nine_realms.acceptance <case_id>` (also shown at the bottom of the Briefing page) |
+| Save a case as the submission log | `python -m nine_realms.export <case_id>` writes `runs/<case_id>/` (`case.json`, `events.jsonl`, `briefing.md`, `acceptance.json`) |
+| Rehearse the final round with no key | `python -m nine_realms.rehearsal --out /tmp/pack_e9 --kind damaged`, then `python -m nine_realms.dryrun --extra-pack /tmp/pack_e9`. This is a **scripted** court over the real corpus: it proves the pipeline, not model quality |
+| Run the tests | `python -m pytest nine_realms/tests` |
+| Deploy (Docker, Render) | [`deploy/README.md`](deploy/README.md), [`render.yaml`](render.yaml) |
+
+More: [architecture of the working build](docs/FINAL_ARCHITECTURE.md) · [final-round strategy and runbook](docs/FINAL_ROUND_STRATEGY.md) · [`nine_realms/README.md`](nine_realms/README.md) · [pitch script](docs/PITCH_SCRIPT.md)
+
+![Architecture of the working build](docs/img/architecture.svg)
+
+### What is not done or not verified
+
+- The saved two-run log from a **real model** is added to `runs/` when it completes; until then `runs/E5-24322/` is an earlier, incomplete real run.
+- The enforced debate rules and the exposure metric (net change in the importing country's total imports, by value) are tested with scripted models; real-model behaviour is checked on the first real run.
+- Range accuracy cannot be measured by us: the organisers hold the true exposure.
+- Live ingestion is rehearsed on packs we generated with every damage type, not on an unseen real pack.
+
+---
+
+## Architecture (design spec)
 
 ```mermaid
 flowchart LR
@@ -55,7 +93,9 @@ Full details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 
 ---
 
-## Quickstart
+## Quickstart for the spec scaffold (`backend/` + React)
+
+This section follows the original design in `docs/`. For the working build, use *Run it* above.
 
 ```bash
 git clone https://github.com/<team>/nine-realms && cd nine-realms
@@ -137,6 +177,9 @@ Case CASE-20261025-a1f3 · As of 2025-03-20 · Runs: 2 · Status: COMPLETE
 
 | Path | What |
 |---|---|
+| `nine_realms/` | **the working build**: corpus + live intake, tools and guard, agents, the Thing, store, API server, acceptance checker, export, dry run |
+| `index.html`, `app.js`, `charts.js`, `styles.css` | its dashboard (no build step) |
+| `deploy/`, `render.yaml` | Docker image and Render blueprint |
 | `backend/app/ingest` | parsers, header and trade-table parsing, damage checks, watcher |
 | `backend/app/search` | FTS5 + dense + RRF hybrid search |
 | `backend/app/tools` | tool catalogue + guard chain + citation validator + exposure calculator |
@@ -154,8 +197,8 @@ Case CASE-20261025-a1f3 · As of 2025-03-20 · Runs: 2 · Status: COMPLETE
 
 ## Submission artifacts
 
-- Saved logs of a full two-run case: `runs/<case_id>/` (see [OBSERVABILITY.md §6](docs/OBSERVABILITY.md#6-submission-checklist-logs))
-- Architecture diagram: above, plus `docs/img/architecture.png`
+- Saved logs of a full two-run case: `runs/<case_id>/`, written by `python -m nine_realms.export <case_id>` (checklist: [OBSERVABILITY.md §6](docs/OBSERVABILITY.md#6-submission-checklist-logs))
+- Architecture diagram: [`docs/img/architecture.svg`](docs/img/architecture.svg) (working build, explained in [docs/FINAL_ARCHITECTURE.md](docs/FINAL_ARCHITECTURE.md)); the design-spec diagram is the Mermaid chart above
 - `.env.example`: all configuration and hard limits
 
 ## Tech stack

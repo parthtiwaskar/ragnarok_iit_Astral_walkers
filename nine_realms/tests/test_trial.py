@@ -39,6 +39,7 @@ def test_briefing_is_rulings_only_with_citations_and_exposure_table():
     assert "| Midgard | wheat |" in md and "[ORV-0001, 2027-01-10]" in md
     assert "ORV-9999" not in md and "[unverified-id-removed]" in md  # Odin cannot invent a source
     assert "Assumptions" in md and "Rail capacity holds" in md
+    assert "Off-Runemark sources: none" in md
     cited = {line.split(" ")[1] for line in md.splitlines() if line.startswith("- ORV-")}
     assert cited <= set(DOCS)
 

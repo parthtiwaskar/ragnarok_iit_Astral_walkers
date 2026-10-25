@@ -13,7 +13,7 @@ Written against what is built and tested in this repo. Where something is **not 
 | As-of clock | Parsed from the question (`dates.py`); enforced by the tool layer, not the model | Tested |
 | 10 acceptance criteria | `python -m nine_realms.acceptance <case>` and `GET /api/cases/<id>/acceptance` | 9 of 10 pass in a scripted end-to-end run; #7 (dashboard) is checked by eye |
 | Saved logs of one full **two-run** case | `runs/<case>/events.jsonl`, `case.json`, `briefing.md` | **Not done with a real model.** Blocked by the Anthropic usage cap |
-| Architecture diagram | `docs/img/architecture.svg`, explained in `docs/FINAL_ARCHITECTURE.md` | Done |
+| Architecture diagram | `docs/img/architecture.svg`, explained in `docs/ARCHITECTURE.md` | Done |
 | Public repo, README, `.env.example` | `deploy/.env.example` lists every variable | Done; root README needs the final pointers (section 8) |
 
 Evaluation criteria and our position:
@@ -73,7 +73,7 @@ The dry run is scripted. It proves the pipeline and the acceptance checker; it s
 
 1. Upload it (dashboard, Evidence page, Data intake, "Upload pack (.zip)"; or `POST /api/ingest`; or drop it in `LIVE_PACKS_DIR`). Open the intake report.
 2. Read the report before asking anything: documents ingested, quarantined (with reasons), duplicates, repaired encodings, flagged trade rows, incomplete tables. If a Tier 1 trade table is cut off or quarantined, tell the team: the exposure numbers for that flow will say "no data".
-3. Paste the question. The as-of date is read from the text ("As of 25 January 2027"); check the chip under the box shows the right date. If the question has no date, the pack's own as-of date applies.
+3. Choose **Full trial** (Fast answer is one run and never sends a case back, so it fails criterion #8), then paste the question. The as-of date is read from the text ("As of 25 January 2027"); check the chip under the box shows the right date. If the question has no date, the pack's own as-of date applies.
 4. Start the trial. Watch the live feed: Heimdall's verdict first. A fake event ends there as `REJECTED` and costs almost nothing.
 5. When it finishes, open Briefing and Council. Check (a) the unit line, (b) every range has a rationale naming its window and metric, (c) the scorecard (concession under 70%, attacks specific), (d) the red flags match what the intake report found.
 6. `GET /api/cases/<id>/acceptance` for the checklist; save `runs/<case>/` for the record.
@@ -87,6 +87,14 @@ The dry run is scripted. It proves the pipeline and the acceptance checker; it s
 | Status `ABORTED` | Server error | Read the server log; rerun; the case row stays for the record |
 | Intake error for a pack | Unsafe or unreadable archive | The report says why; fix the zip; the rest of the corpus is untouched |
 | Range far from the table | Metric mismatch | Read Odin's rationale for the window; check the unit line |
+
+## 3a. Producing the submission log (the one real two-run case)
+
+1. Put one key in `.env` (`ANTHROPIC_API_KEY`, `DEEPSEEK_API_KEY` or `OPENAI_API_KEY`; set `NINE_REALMS_PROVIDER` if several are present). Groq's free tier cannot finish a case.
+2. `python -m nine_realms.server`, open the dashboard, choose **Full trial** on the Ask screen (the default is *Fast answer*, which is one run and cannot meet criterion #8), and ask the sample question. Wait for `COMPLETE` with two runs.
+3. Check it: `python -m nine_realms.acceptance <case_id>` should show 9 passed and 1 manual (#7). Read the debate scorecard and the unit line in the briefing.
+4. Save it: `python -m nine_realms.export <case_id>` writes `runs/<case_id>/` with `case.json`, `events.jsonl`, `briefing.md` and `acceptance.json`. Commit that folder (it holds no keys).
+5. If the case ended `INCOMPLETE` (limit, outage, or Odin satisfied after one run), do not submit it: rerun. A case that is satisfied after run 1 has no second run; ask a question that needs more evidence, or check Odin's sufficiency reasons.
 
 ## 4. Cost and time budget
 
