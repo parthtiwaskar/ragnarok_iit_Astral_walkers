@@ -19,9 +19,20 @@ First start builds `data/ragnarisk.sqlite` (corpus + cases + event log) and impo
 The dashboard reads everything from `/api/*` (documents + full-text search, news feed, cases, claims, rulings, events);
 `POST /api/cases {question}` starts a trial in the background (one at a time; keys come from the server's environment only).
 
+## Search (hybrid)
+`search_documents` fuses BM25 (SQLite FTS5, stemmed) with dense cosine similarity by reciprocal-rank fusion; every filter
+(as-of clock, country, sector, event, source type, tier, dates) applies to both sides. Vectors live in the `para_vecs` table.
+Embedder: `fastembed` bge-small (384-d, downloaded once into `data/models/`) when installed, else a built-in hashed
+n-gram embedder, so search works offline. Force one with `NINE_REALMS_EMBEDDER=hash|fastembed`.
+
+## Keys
+`python -m nine_realms.server` and `run_e5.py` read `ANTHROPIC_API_KEY` / `GROQ_API_KEY` (and `GROQ_MODEL`) from the
+environment or a gitignored `.env` in the repo root. Keys are never sent to the browser. Groq's free tier is too small
+(daily token cap, weak JSON discipline on the 20b model) to complete a trial; use Anthropic.
+
 Layout: `models.py` Case File · `tools.py` tool catalogue, allowlists, limits, guard chain · `agents/` the four agents and
 prompts · `thing.py` orchestrator · `briefing.py` digest + renderer · `memory.py` per-agent private memory ·
-`corpus.py` ingestion into SQLite + tools · `store.py` cases/claims/rulings/events tables · `server.py` API + dashboard · `llm.py` Anthropic / OpenAI-compatible clients + `FakeLLM`.
+`corpus.py` ingestion into SQLite + tools · `store.py` cases/claims/rulings/events tables · `server.py` API + dashboard · `embed.py` embedders for semantic search · `env.py` .env loader · `llm.py` Anthropic / OpenAI-compatible clients + `FakeLLM`.
 
 ## Status of the saved run (`runs/E5-24322/`)
 Status **INCOMPLETE**. Run 1 finished (8 claims, 6 attacks, 5 concessions, rulings, remand to a second run, which brought new

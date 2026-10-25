@@ -20,8 +20,11 @@ import threading
 from collections import Counter
 from datetime import date
 from difflib import SequenceMatcher
+from array import array
 from pathlib import Path
 from typing import Any
+
+from .embed import dot, get_embedder
 
 _TOKEN = re.compile(r"[a-z0-9]{2,}")
 _ANCHOR = re.compile(r"\[P\d+\]\s*")
@@ -45,6 +48,7 @@ CREATE TABLE IF NOT EXISTS paras(doc_id TEXT, idx INTEGER, text TEXT, PRIMARY KE
 CREATE VIRTUAL TABLE IF NOT EXISTS paras_fts USING fts5(text, title, doc_id UNINDEXED, idx UNINDEXED, tokenize='porter unicode61');
 CREATE TABLE IF NOT EXISTS relations(target TEXT, kind TEXT, by_doc TEXT, by_date TEXT, inferred INTEGER);
 CREATE TABLE IF NOT EXISTS quarantine(doc_id TEXT PRIMARY KEY, file TEXT, reason TEXT);
+CREATE TABLE IF NOT EXISTS para_vecs(doc_id TEXT, idx INTEGER, vec BLOB, PRIMARY KEY(doc_id, idx));
 CREATE TABLE IF NOT EXISTS trade_rows(doc_id TEXT, para INTEGER, route_from TEXT, route_to TEXT, product TEXT,
   year INTEGER, month INTEGER, value_usd_m REAL, volume_t REAL, quality TEXT);
 """
@@ -131,6 +135,8 @@ class LocalCorpus:
         if not self.reused:
             self._ingest(fp)
         self._load()
+        self.embedder = get_embedder()
+        self._ensure_vectors()
 
     # -- ingestion --------------------------------------------------------------------
     def _fingerprint(self) -> str:
@@ -257,6 +263,30 @@ class LocalCorpus:
             row = self.db.execute("SELECT v FROM meta WHERE k='pack_as_of'").fetchone()
             self.pack_as_of = row["v"] if row else ""
 
+    # -- semantic vectors --------------------------------------------------------------
+    def _ensure_vectors(self) -> None:
+        """Embed every paragraph once (title + text). Re-embeds if the embedder changed or the pack was re-ingested."""
+        with self._lock:
+            row = self.db.execute("SELECT v FROM meta WHERE k='embed_backend'").fetchone()
+            have = self.db.execute("SELECT COUNT(*) FROM para_vecs").fetchone()[0]
+            total = self.db.execute("SELECT COUNT(*) FROM paras").fetchone()[0]
+            if not (row and row["v"] == self.embedder.name and have == total and total):
+                keys, texts = [], []
+                for d in self.docs.values():
+                    for i, p in enumerate(d["paras"]):
+                        keys.append((d["doc_id"], i))
+                        texts.append(f"{d['title']}. {_ANCHOR.sub('', p)}"[:1500])
+                vecs = self.embedder.encode_docs(texts) if texts else []
+                with self.db:
+                    self.db.execute("DELETE FROM para_vecs")
+                    self.db.executemany("INSERT INTO para_vecs VALUES (?,?,?)", [(k[0], k[1], v.tobytes()) for k, v in zip(keys, vecs)])
+                    self.db.execute("INSERT OR REPLACE INTO meta VALUES ('embed_backend', ?)", (self.embedder.name,))
+            self._vecs: list[tuple[str, int, array]] = []
+            for r in self.db.execute("SELECT doc_id, idx, vec FROM para_vecs"):
+                a = array("f")
+                a.frombytes(r["vec"])
+                self._vecs.append((r["doc_id"], r["idx"], a))
+
     def stats(self) -> dict[str, Any]:
         with self._lock:
             q = lambda s: self.db.execute(s).fetchone()[0]  # noqa: E731
@@ -266,7 +296,7 @@ class LocalCorpus:
                     "relations": q("SELECT COUNT(*) FROM relations"), "quarantined": len(self.quarantine),
                     "duplicates": q("SELECT COUNT(*) FROM docs WHERE duplicate_of IS NOT NULL"),
                     "encoding_repairs": q("SELECT COUNT(*) FROM docs WHERE notes LIKE '%encoding%'"),
-                    "reused_existing_db": self.reused}
+                    "embeddings": len(self._vecs), "embed_backend": self.embedder.name, "reused_existing_db": self.reused}
 
     # -- helpers ------------------------------------------------------------------------
     def _status(self, d: dict[str, Any], as_of: str) -> dict[str, Any]:
@@ -294,9 +324,11 @@ class LocalCorpus:
                        prefix: str = "", text: str = "", as_of: str = "", limit: int = 200, offset: int = 0) -> dict[str, Any]:
         as_of = as_of or self.pack_as_of
         hits: dict[str, float] | None = None
+        matched: dict[str, list[str]] = {}
         if text.strip():
-            r = self.t_search_documents(text, "9999-12-31", limit=12)
+            r = self.t_search_documents(text, "9999-12-31", limit=40)
             hits = {x["doc_id"]: x["score"] for x in r["results"]}
+            matched = {x["doc_id"]: x["matched_by"] for x in r["results"]}
         out = []
         for d in sorted(self.docs.values(), key=lambda d: d["doc_id"]):
             if country and d["country"].lower() != country.lower() or sector and d["sector"].lower() != sector.lower():
@@ -306,7 +338,7 @@ class LocalCorpus:
             if hits is not None and d["doc_id"] not in hits:
                 continue
             out.append({**self._meta(d, as_of), "format": d["format"], "after_as_of": d["date"] > as_of, "duplicate_of": d["duplicate_of"],
-                        "notes": d["notes"]})
+                        "notes": d["notes"], "matched_by": matched.get(d["doc_id"], [])})
         if hits is not None:
             out.sort(key=lambda d: -hits[d["doc_id"]])
         return {"total": len(out), "documents": out[offset: offset + max(1, min(limit, 500))], "quarantined": self.quarantine}
@@ -327,31 +359,51 @@ class LocalCorpus:
 
     def t_search_documents(self, query: str, as_of: str, country: str = "", sector: str = "", event_id: str = "",
                            source_type: str = "", tier_max: int | None = None, date_from: str = "", date_to: str = "",
-                           limit: int = 6) -> dict[str, Any]:
+                           limit: int = 6, mode: str = "hybrid") -> dict[str, Any]:
+        """Hybrid search: BM25 (FTS5, stemmed) and dense cosine similarity, merged with reciprocal-rank fusion.
+        Filters (as-of, country, sector, event, type, tier, dates) apply to both sides. mode: hybrid | lexical | semantic."""
+        memo: dict[str, bool] = {}
+
+        def ok(doc_id: str) -> bool:
+            if doc_id not in memo:
+                d = self.docs[doc_id]
+                memo[doc_id] = not (
+                    d["date"] > as_of or d["duplicate_of"]
+                    or (country and d["country"].lower() != country.lower()) or (sector and d["sector"].lower() != sector.lower())
+                    or (event_id and d["event_id"].lower() != event_id.lower()) or (source_type and d["source_type"].lower() != source_type.lower())
+                    or (tier_max is not None and d["tier"] > int(tier_max)) or (date_from and d["date"] < date_from) or (date_to and d["date"] > date_to))
+            return memo[doc_id]
+
         toks = list(dict.fromkeys(_tok(query)))
         if not toks:
             return {"results": [], "note": "empty query"}
-        match = " OR ".join(f'"{t}"' for t in toks)
-        best: dict[str, tuple[float, int]] = {}
-        for r in self.db.execute("SELECT doc_id, idx, bm25(paras_fts) AS s FROM paras_fts WHERE paras_fts MATCH ? ORDER BY s LIMIT 400", (match,)):
-            d = self.docs[r["doc_id"]]
-            if d["date"] > as_of or d["duplicate_of"]:
-                continue
-            if country and d["country"].lower() != country.lower() or sector and d["sector"].lower() != sector.lower():
-                continue
-            if event_id and d["event_id"].lower() != event_id.lower() or source_type and d["source_type"].lower() != source_type.lower():
-                continue
-            if tier_max is not None and d["tier"] > int(tier_max):
-                continue
-            if date_from and d["date"] < date_from or date_to and d["date"] > date_to:
-                continue
-            score = -r["s"]
-            if score > best.get(r["doc_id"], (-1e9, 0))[0]:
-                best[r["doc_id"]] = (score, r["idx"])
-        ranked = sorted(best.items(), key=lambda kv: -kv[1][0])[: max(1, min(int(limit or 6), 12))]
-        return {"results": [{**self._meta(self.docs[i], as_of), "score": round(s, 2),
-                             "snippet": _anchored(pi, self.docs[i]["paras"][pi])[:320]} for i, (s, pi) in ranked],
-                "total_matches": len(best)}
+        lex: dict[str, tuple[float, int]] = {}
+        if mode in ("hybrid", "lexical"):
+            match = " OR ".join(f'"{t}"' for t in toks)
+            for r in self.db.execute("SELECT doc_id, idx, bm25(paras_fts) AS s FROM paras_fts WHERE paras_fts MATCH ? ORDER BY s LIMIT 400", (match,)):
+                if ok(r["doc_id"]) and -r["s"] > lex.get(r["doc_id"], (-1e9, 0))[0]:
+                    lex[r["doc_id"]] = (-r["s"], r["idx"])
+        sem: dict[str, tuple[float, int]] = {}
+        if mode in ("hybrid", "semantic") and self._vecs:
+            q = self.embedder.encode_query(query)
+            for doc_id, idx, vec in self._vecs:
+                if ok(doc_id):
+                    c = dot(q, vec)
+                    if c >= self.embedder.min_score and c > sem.get(doc_id, (-1.0, 0))[0]:
+                        sem[doc_id] = (c, idx)
+            sem = dict(sorted(sem.items(), key=lambda kv: -kv[1][0])[:30])
+        lex_rank = {d: i for i, (d, _) in enumerate(sorted(lex.items(), key=lambda kv: -kv[1][0]))}
+        sem_rank = {d: i for i, (d, _) in enumerate(sorted(sem.items(), key=lambda kv: -kv[1][0]))}
+        fused = {d: (1 / (60 + lex_rank[d]) if d in lex_rank else 0) + (1 / (60 + sem_rank[d]) if d in sem_rank else 0) for d in set(lex) | set(sem)}
+        ranked = sorted(fused.items(), key=lambda kv: -kv[1])[: max(1, min(int(limit or 6), 40))]
+        out = []
+        for doc_id, score in ranked:
+            idx = lex[doc_id][1] if doc_id in lex else sem[doc_id][1]
+            out.append({**self._meta(self.docs[doc_id], as_of), "score": round(score * 100, 2),
+                        "matched_by": [n for n, hit in (("lexical", doc_id in lex), ("semantic", doc_id in sem)) if hit],
+                        "semantic": round(sem[doc_id][0], 3) if doc_id in sem else None,
+                        "snippet": _anchored(idx, self.docs[doc_id]["paras"][idx])[:320]})
+        return {"results": out, "total_matches": len(fused), "search": self.embedder.name if sem or mode != "lexical" else "lexical"}
 
     def t_read_document(self, doc_id: str, as_of: str) -> dict[str, Any]:
         d = self.docs.get(doc_id)

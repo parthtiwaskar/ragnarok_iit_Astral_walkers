@@ -12,7 +12,8 @@ Serves index.html / app.js / styles.css and a JSON API backed by one SQLite file
   GET  /api/cases/<id>                  full case (claims, evidence, attacks, responses, rulings, ranges, briefing)
   GET  /api/cases/<id>/events?since=N   event log, for live progress
   GET  /api/cases/<id>/briefing.md      the briefing as Markdown
-  POST /api/cases {question, as_of?}    start a trial in the background (one at a time) -> 202 {case_id}
+  POST /api/cases {question, as_of?, options?}  start a trial in the background (one at a time) -> 202 {case_id}
+                                         options: min_runs, max_runs, max_claims_per_side, max_steps_per_turn
 
 Security: binds to 127.0.0.1; POST rejects cross-origin requests; API keys are read from the server's environment
 and never sent to or accepted from the browser.
@@ -34,6 +35,7 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 from .corpus import LocalCorpus
+from .env import load_env
 from .events import EventBus
 from .store import Store
 from .thing import Thing
@@ -42,6 +44,8 @@ from .tools import Limits
 ROOT = Path(__file__).resolve().parent.parent
 STATIC = {"/": "index.html", "/index.html": "index.html", "/app.js": "app.js", "/styles.css": "styles.css"}
 DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+# Per-case limit overrides a client may ask for (e.g. a small trial). Anything else is ignored.
+OPTION_RANGES = {"min_runs": (1, 3), "max_runs": (1, 3), "max_claims_per_side": (1, 8), "max_steps_per_turn": (4, 12)}
 
 
 def make_llm(provider: str):
@@ -67,19 +71,20 @@ class App:
         self.running: str | None = None
         self._lock = threading.Lock()
 
-    def start_case(self, question: str, as_of: str) -> str:
+    def start_case(self, question: str, as_of: str, options: dict[str, int] | None = None) -> str:
         with self._lock:
             if self.running:
                 raise RuntimeError(f"busy:{self.running}")
             case_id = f"CASE-{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:4]}"
             self.running = case_id
-        threading.Thread(target=self._run, args=(case_id, question, as_of), daemon=True).start()
+        threading.Thread(target=self._run, args=(case_id, question, as_of, options or {}), daemon=True).start()
         return case_id
 
-    def _run(self, case_id: str, question: str, as_of: str) -> None:
+    def _run(self, case_id: str, question: str, as_of: str, options: dict[str, int]) -> None:
         try:
             bus = EventBus(sink=lambda ev: self.store.add_event(case_id, ev))
-            lim = Limits(**({"max_llm_calls": 150} if self.provider == "anthropic" else {"max_llm_calls": 150, "max_tool_result_chars": 3500, "max_context_chars": 13000}))
+            base = {"max_llm_calls": 150} if self.provider == "anthropic" else {"max_llm_calls": 150, "max_tool_result_chars": 3500, "max_context_chars": 13000}
+            lim = Limits(**base, **options)
             thing = Thing(make_llm(self.provider), self.corpus, limits=lim, bus=bus, memory_dir=self.memory_dir,
                           on_update=lambda c: self.store.save_case(c.to_dict(), self.provider))
             thing.run_case(question, as_of, case_id=case_id)
@@ -178,7 +183,9 @@ def make_handler(app: App):
                     return self._json(400, {"error": "as_of must be YYYY-MM-DD"})
                 if not app.provider:
                     return self._json(503, {"error": "No LLM key is configured on the server. Set ANTHROPIC_API_KEY (or GROQ_API_KEY) and restart."})
-                return self._json(202, {"case_id": app.start_case(question, as_of)})
+                opts = {k: int(v) for k, v in (body.get("options") or {}).items()
+                        if k in OPTION_RANGES and isinstance(v, int) and OPTION_RANGES[k][0] <= v <= OPTION_RANGES[k][1]}
+                return self._json(202, {"case_id": app.start_case(question, as_of, opts), "options": opts})
             except RuntimeError as exc:
                 if str(exc).startswith("busy:"):
                     return self._json(409, {"error": "A trial is already running.", "case_id": str(exc)[5:]})
@@ -201,8 +208,14 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--import-runs", default=str(ROOT / "runs"), help="import saved runs/<case>/case.json on first start")
     args = ap.parse_args(argv)
 
+    loaded = load_env()
+    if loaded:
+        print(f"loaded from .env: {', '.join(loaded)}")
     corpus = LocalCorpus(args.pack, args.db)
     store = Store(args.db)
+    stale = store.abort_stale()
+    if stale:
+        print(f"marked {stale} unfinished case(s) from a previous run as ABORTED")
     runs = Path(args.import_runs)
     if runs.exists() and not store.list_cases():
         for d in sorted(runs.glob("*")):

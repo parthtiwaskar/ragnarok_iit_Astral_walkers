@@ -49,6 +49,8 @@ function statusBadge(status, running) {
 const fmtDate = (iso) => (iso ? new Date(iso + "T00:00:00Z").toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric", timeZone: "UTC" }) : "—");
 const fmtStamp = (seconds) => (seconds ? new Date(seconds * 1000).toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) : "—");
 const pad2 = (n) => String(n).padStart(2, "0");
+const skeleton = () => '<div class="skeleton" aria-busy="true"><i></i><i></i><i></i><i></i></div>';
+const errorBox = (title, message) => `<div class="state-box"><strong>${escapeHtml(title)}</strong><span>${escapeHtml(message)}</span><button class="button button-quiet" data-action="retry">Try again</button></div>`;
 const caseTitle = (c) => (c.question || "").replace(/^As of [^,]+,\s*/i, "").replace(/^how exposed are /i, "Exposure of ").slice(0, 70);
 
 async function refreshCases() {
@@ -139,7 +141,7 @@ async function hydrateOverview() {
 function caseRow(c) {
   const focus = [...new Set((c.scope || []).map(([country]) => country))].map((x) => `<span class="focus-tag">${escapeHtml(x)}</span>`).join("");
   const sectors = [...new Set((c.scope || []).map(([, sector]) => sector))].join(" · ");
-  return `<tr><td><div class="table-case-title"><span class="table-case-icon">↗</span><span><strong>${escapeHtml(caseTitle(c))}</strong><small>${escapeHtml(c.event_id || "—")} · ${c.runs} run${c.runs === 1 ? "" : "s"} · ${c.claims} claims</small></span></div></td><td>${focus}<small class="focus-detail">${escapeHtml(sectors)}</small></td><td>${statusBadge(c.status, state.running === c.case_id)}</td><td class="date-cell">${fmtStamp(c.updated_at)}</td><td><button class="row-arrow" data-action="open-case-id" data-case="${escapeHtml(c.case_id)}" aria-label="Open investigation">↗</button></td></tr>`;
+  return `<tr class="clickable" data-action="open-case-id" data-case="${escapeHtml(c.case_id)}"><td><div class="table-case-title"><span class="table-case-icon">↗</span><span><strong>${escapeHtml(caseTitle(c))}</strong><small>${escapeHtml(c.event_id || "—")} · ${c.runs} run${c.runs === 1 ? "" : "s"} · ${c.claims} claims</small></span></div></td><td>${focus}<small class="focus-detail">${escapeHtml(sectors)}</small></td><td>${statusBadge(c.status, state.running === c.case_id)}</td><td class="date-cell">${fmtStamp(c.updated_at)}</td><td><button class="row-arrow" data-action="open-case-id" data-case="${escapeHtml(c.case_id)}" aria-label="Open investigation">↗</button></td></tr>`;
 }
 
 function friendlyReason(reasons = []) {
@@ -190,7 +192,7 @@ async function renderInvestigations() {
     document.querySelector("#case-rows").innerHTML = state.cases.length ? state.cases.map(caseRow).join("") : '<tr><td colspan="5" class="loading-row">No investigations yet.</td></tr>';
     document.querySelector("#case-foot").innerHTML = `<span>${state.cases.length} investigation${state.cases.length === 1 ? "" : "s"}</span><span>Stored in the local database</span>`;
   } catch (error) {
-    document.querySelector("#case-rows").innerHTML = `<tr><td colspan="5" class="loading-row error-row">${escapeHtml(error.message)}</td></tr>`;
+    document.querySelector("#case-rows").innerHTML = `<tr><td colspan="5" class="loading-row error-row">${escapeHtml(error.message)} <button class="button button-quiet" data-action="retry">Try again</button></td></tr>`;
   }
 }
 
@@ -199,11 +201,11 @@ let docTimer;
 function renderEvidence() {
   content.innerHTML = `
     <section class="page-heading">
-      <div><div class="eyebrow"><span class="live-dot"></span> INTELLIGENCE <span class="eyebrow-divider">/</span> SOURCE REGISTER</div><h1>Evidence explorer</h1><p class="page-subtitle">Search the ingested corpus. Flags show retractions, duplicates and repaired files.</p></div>
+      <div><div class="eyebrow"><span class="live-dot"></span> INTELLIGENCE <span class="eyebrow-divider">/</span> SOURCE REGISTER</div><h1>Evidence explorer</h1><p class="page-subtitle">Hybrid search: exact words plus meaning. Flags show retractions, duplicates and repaired files.</p></div>
       <div class="heading-actions"><span class="asof-pill"><span class="calendar-icon">▤</span> <strong id="evidence-count">—</strong> RECORDS</span></div>
     </section>
     <section class="panel evidence-panel">
-      <div class="evidence-toolbar"><label class="register-search"><span>⌕</span><input id="evidence-search" type="search" placeholder="Full-text search (e.g. rail Ravik wheat)…" aria-label="Search corpus"></label>
+      <div class="evidence-toolbar"><label class="register-search"><span>⌕</span><input id="evidence-search" type="search" placeholder="Search by words or meaning (e.g. why did grain shipments fall)…" aria-label="Search corpus"></label>
         <select id="source-filter" aria-label="Source group"><option value="">All groups</option><option value="ATL">ATL · Atlas</option><option value="ORV">ORV · Regional</option><option value="WLD">WLD · Newswire</option></select>
         <select id="tier-filter" aria-label="Reliability tier"><option value="">All tiers</option><option value="1">Tier 1</option><option value="2">Tier 2</option><option value="3">Tier 3</option><option value="4">Tier 4</option></select>
         <select id="country-filter" aria-label="Country"><option value="">All countries</option></select></div>
@@ -229,7 +231,7 @@ async function loadDocs(first = false) {
     rows.innerHTML = data.documents.length ? data.documents.map((d) => `
       <tr class="clickable" data-action="open-doc" data-doc="${escapeHtml(d.doc_id)}">
         <td class="document-id">${escapeHtml(d.doc_id)}</td>
-        <td><strong class="evidence-title">${escapeHtml(d.title)}</strong><small class="evidence-format">${escapeHtml(d.format)} ${d.flags.map((f) => `<span class="flag-chip">${escapeHtml(f.replace(/_/g, " ").toLowerCase())}</span>`).join("")}${d.after_as_of ? '<span class="flag-chip">after as-of</span>' : ""}</small></td>
+        <td><strong class="evidence-title">${escapeHtml(d.title)}</strong><small class="evidence-format">${escapeHtml(d.format)} ${d.flags.map((f) => `<span class="flag-chip">${escapeHtml(f.replace(/_/g, " ").toLowerCase())}</span>`).join("")}${d.after_as_of ? '<span class="flag-chip">after as-of</span>' : ""}${(d.matched_by || []).map((m) => `<span class="match-chip ${m === "semantic" ? "sem" : ""}" title="${m === "semantic" ? "Matched by meaning" : "Matched by words"}">${m === "semantic" ? "meaning" : "words"}</span>`).join("")}</small></td>
         <td>${escapeHtml(d.outlet)}</td><td>${escapeHtml(d.country || "—")}</td><td><span class="focus-tag">${escapeHtml(d.sector || "general")}</span></td>
         <td><span class="reliability-tag">TIER ${d.tier}</span></td><td class="date-cell">${escapeHtml(d.date)}</td></tr>`).join("") : '<tr><td colspan="7" class="loading-row">No records match these filters.</td></tr>';
     document.querySelector("#evidence-result-count").textContent = `${data.documents.length} of ${data.total} matching records${Object.keys(data.quarantined).length ? ` · ${Object.keys(data.quarantined).length} quarantined: ${Object.keys(data.quarantined).join(", ")}` : ""}`;
@@ -288,7 +290,7 @@ function claimCard(run, claim) {
   const status = ruling?.status || (claim.status === "conceded" ? "conceded" : "unruled");
   const est = claim.estimate ? `<span class="claim-est">${escapeHtml(claim.estimate.country)} · ${escapeHtml(claim.estimate.sector)}: <b>${fmtRange([claim.estimate.low, claim.estimate.high])}</b></span>` : "";
   const chips = [...new Map(claim.evidence.map((e) => [e.doc_id, e])).values()].slice(0, 4).map((e) => `<button class="chip-btn" data-action="open-doc" data-doc="${escapeHtml(e.doc_id)}" data-locator="${escapeHtml(e.locator)}" data-quote="${escapeHtml(e.quote)}">${escapeHtml(e.doc_id)}</button>`).join("");
-  return `<article class="claim"><header><span class="claim-id">${escapeHtml(claim.id)}</span><span class="badge">${escapeHtml(claim.kind)}</span>${rulingPill(status)}</header><p>${escapeHtml(claim.text)}</p>${est}<div class="cites">${chips}</div>${ruling?.rationale ? `<details class="why"><summary>Odin's reasoning</summary><p>${escapeHtml(ruling.rationale)}</p></details>` : ""}</article>`;
+  return `<article class="claim"><header><span class="claim-id">${escapeHtml(claim.id)}</span><span class="badge">${escapeHtml(claim.kind)}</span>${rulingPill(status)}</header><p class="clamp">${escapeHtml(claim.text)}</p>${claim.text.length > 260 ? '<button class="more-btn" data-action="toggle-clamp">Show more</button>' : ""}${est}<div class="cites">${chips}</div>${ruling?.rationale ? `<details class="why"><summary>Odin's reasoning</summary><p>${escapeHtml(ruling.rationale)}</p></details>` : ""}</article>`;
 }
 
 async function renderCouncil() {
@@ -296,7 +298,7 @@ async function renderCouncil() {
     try { await refreshCases(); } catch { /* handled below */ }
   }
   if (!state.caseId) return councilEmpty();
-  content.innerHTML = '<section class="brief-loading">Loading the trial…</section>';
+  content.innerHTML = skeleton();
   try {
     const run = (await loadCase(state.caseId, true)).case;
     const claims = Object.values(run.claims);
@@ -315,14 +317,15 @@ async function renderCouncil() {
         <div><div class="eyebrow"><span class="live-dot"></span> INTELLIGENCE <span class="eyebrow-divider">/</span> ADVERSARIAL REVIEW</div><h1>Agent council</h1><p class="page-subtitle">${escapeHtml(run.question)}</p></div>
         <div class="heading-actions">${statusBadge(run.status, running)}<button class="button button-primary" data-action="new-investigation">＋ New investigation</button></div>
       </section>
+      <nav class="council-jump" aria-label="Sections"><a href="#council" data-jump="verify">Verification</a><a href="#council" data-jump="trial">Thor vs Loki</a><a href="#council" data-jump="xexam">Cross-examination</a><a href="#council" data-jump="rulings">Rulings</a></nav>
       ${running ? `<section class="live-strip panel"><span class="live-dot"></span><ul>${live || "<li>Starting…</li>"}</ul></section>` : ""}
-      <section class="panel council-verify"><div><span class="agent-avatar heimdall">H</span><b>Heimdall</b> · ${run.verified === null ? "verifying…" : run.verified ? "event verified" : "event NOT verified"} <span class="badge">${escapeHtml(run.event_id || "—")}</span></div><p>${escapeHtml(run.verdict_reason || "")}</p><div class="cites">${flags}</div></section>
-      <section class="trial-cols"><div><h2><span class="agent-avatar thor">T</span> Thor <small>argues high exposure</small></h2>${col("THOR")}</div>
+      <section class="panel council-verify" id="j-verify"><div><span class="agent-avatar heimdall">H</span><b>Heimdall</b> · ${run.verified === null ? "verifying…" : run.verified ? "event verified" : "event NOT verified"} <span class="badge">${escapeHtml(run.event_id || "—")}</span></div><p class="clamp">${escapeHtml(run.verdict_reason || "")}</p>${(run.verdict_reason || "").length > 260 ? '<button class="more-btn" data-action="toggle-clamp">Show more</button>' : ""}<div class="cites">${flags}</div></section>
+      <section class="trial-cols" id="j-trial"><div><h2><span class="agent-avatar thor">T</span> Thor <small>argues high exposure</small></h2>${col("THOR")}</div>
         <div><h2><span class="agent-avatar loki">L</span> Loki <small>argues limited exposure</small></h2>${col("LOKI")}</div></section>
-      ${attacks ? `<section class="brief-section"><h2>Cross-examination <em>${Object.keys(run.attacks).length}</em></h2><p class="hint">Each side attacks the other's claims. A defence needs new evidence or it is a concession.</p>${attacks}</section>` : ""}
-      <section class="brief-section"><h2><span class="agent-avatar odin">O</span> Odin's rulings by run</h2>${runs || '<p class="rating-note">No run has finished yet.</p>'}<button class="button button-quiet" data-page="briefing" style="margin-top:12px">Open the briefing →</button></section>`;
+      ${attacks ? `<section class="brief-section" id="j-xexam"><h2>Cross-examination <em>${Object.keys(run.attacks).length}</em></h2><p class="hint">Each side attacks the other's claims. A defence needs new evidence or it is a concession.</p>${attacks}</section>` : ""}
+      <section class="brief-section" id="j-rulings"><h2><span class="agent-avatar odin">O</span> Odin's rulings by run</h2>${runs || '<p class="rating-note">No run has finished yet.</p>'}<button class="button button-quiet" data-page="briefing" style="margin-top:12px">Open the briefing →</button></section>`;
   } catch (error) {
-    content.innerHTML = `<section class="register-note panel"><span class="note-icon">!</span><div><strong>Could not load the trial.</strong><p>${escapeHtml(error.message)}</p></div></section>`;
+    content.innerHTML = errorBox("Could not load the trial", error.message);
   }
 }
 
@@ -401,9 +404,9 @@ function exposureRows(run) {
   });
 }
 
-function ratingCard(row, provisional) {
+function ratingCard(row, provisional, pending) {
   if (!row.odin) {
-    return `<article class="rating-card rating-none"><header><h3>${escapeHtml(row.country)} · ${escapeHtml(row.sector)}<small>Import volume</small></h3><span class="rating-pill"><i></i>No data</span></header><div class="rating-range">—</div><p class="rating-note">Odin found no usable evidence for this flow in Runemark, so no range is given rather than a guess.</p></article>`;
+    return `<article class="rating-card rating-none"><header><h3>${escapeHtml(row.country)} · ${escapeHtml(row.sector)}<small>Import volume</small></h3><span class="rating-pill"><i></i>${pending ? "Pending" : "No data"}</span></header><div class="rating-range">—</div><p class="rating-note">${pending ? "Waiting for Odin's ruling. This card fills in when the trial finishes." : "Odin found no usable evidence for this flow in Runemark, so no range is given rather than a guess."}</p></article>`;
   }
   const [lo, hi] = magnitude(row.odin);
   const band = RATING_BANDS.find((b) => (lo + hi) / 2 < b.max);
@@ -455,8 +458,8 @@ function renderBriefingResult(runInfo) {
       <div class="heading-actions">${options}<span class="asof-pill"><span class="calendar-icon">▦</span> AS OF <strong>${escapeHtml(fmtDate(run.as_of).toUpperCase())}</strong></span><button class="button button-quiet" data-action="export-briefing">Download .md</button></div>
     </section>
     <p class="brief-question">${escapeHtml(run.question)}</p>
-    <div class="brief-status ${complete ? "ok" : ""}"><span>${complete ? "✓" : "!"}</span><div><strong>${complete ? "Complete" : state.running === run.case_id ? "Running: results will fill in" : "Provisional: this analysis did not finish"}</strong><p>${complete ? "Odin judged the evidence sufficient." : escapeHtml(friendlyReason(run.status_reasons)) + " Treat the ratings below as a first pass."}</p></div></div>
-    <section class="rating-grid">${rows.length ? rows.map((row) => ratingCard(row, !complete)).join("") : '<p class="rating-note">No exposure ranges yet.</p>'}</section>
+    <div class="brief-status ${complete ? "ok" : ""}"><span>${complete ? "✓" : "!"}</span><div><strong>${complete ? "Complete" : state.running === run.case_id ? "Running: results will fill in" : "Provisional: this analysis did not finish"}</strong><p>${complete ? "Odin judged the evidence sufficient." : state.running === run.case_id ? "The trial is still running. Ratings appear as Odin rules." : escapeHtml(friendlyReason(run.status_reasons)) + " Treat the ratings below as a first pass."}</p></div></div>
+    <section class="rating-grid">${rows.length ? rows.map((row) => ratingCard(row, !complete, state.running === run.case_id || !Object.keys(run.rulings || {}).length)).join("") : '<p class="rating-note">No exposure ranges yet.</p>'}</section>
     <div class="rating-scale" title="Rating is based on the middle of Odin's range">${scale}</div>
     ${brief.executive_summary ? `<section class="brief-section"><h2>Summary</h2><p class="brief-question" style="margin:6px 0 0">${escapeHtml(brief.executive_summary)}</p></section>` : ""}
     ${findingsSection(run, "Established", "Sourced facts and findings that survived cross-examination.", brief.established, true)}
@@ -467,7 +470,7 @@ function renderBriefingResult(runInfo) {
 }
 
 async function renderBriefing() {
-  content.innerHTML = '<section class="brief-loading">Loading briefing…</section>';
+  content.innerHTML = skeleton();
   try {
     await refreshCases();
     if (!state.caseId) throw new Error("no case");
@@ -501,6 +504,8 @@ function closeDialog() { modal.hidden = true; }
 function closeSheet() { sheet.hidden = true; }
 
 document.addEventListener("click", (event) => {
+  const jump = event.target.closest("[data-jump]");
+  if (jump) { event.preventDefault(); document.querySelector(`#j-${jump.dataset.jump}`)?.scrollIntoView({ behavior: "smooth", block: "start" }); return; }
   const target = event.target.closest("[data-page], [data-action]");
   if (!target) return;
   if (target.dataset.page) {
@@ -520,6 +525,8 @@ document.addEventListener("click", (event) => {
     case "open-doc": openDoc(d.doc, d.locator || "", d.quote || ""); break;
     case "close-sheet": closeSheet(); break;
     case "export-briefing": downloadBriefing(); break;
+    case "retry": refreshCurrent(); break;
+    case "toggle-clamp": { const p = target.previousElementSibling; p.classList.toggle("open"); target.textContent = p.classList.contains("open") ? "Show less" : "Show more"; break; }
   }
 });
 

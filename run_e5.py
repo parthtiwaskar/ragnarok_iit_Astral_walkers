@@ -15,6 +15,7 @@ from pathlib import Path
 from nine_realms import AnthropicClient, EventBus, Limits, Thing
 from nine_realms.llm import OpenAICompatClient
 from nine_realms.corpus import LocalCorpus
+from nine_realms.env import load_env
 from nine_realms.store import Store
 
 PACK = "03_Ragnarok Trial of the Nine Realms/dev_pack_E5"
@@ -30,6 +31,7 @@ def main() -> int:
     ap.add_argument("--memory-dir", default="data/memory", help="persistent per-agent memory, reused across cases")
     ap.add_argument("--max-llm-calls", type=int, default=150)
     args = ap.parse_args()
+    load_env()
 
     key_var = "GROQ_API_KEY" if args.provider == "groq" else "ANTHROPIC_API_KEY"
     if not os.environ.get(key_var):

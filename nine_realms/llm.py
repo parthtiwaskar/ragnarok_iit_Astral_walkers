@@ -134,13 +134,19 @@ class OpenAICompatClient:
                     data = json.loads(r.read())
                 break
             except urllib.error.HTTPError as e:
-                detail = e.read().decode(errors="replace")[:300]
+                full = e.read().decode(errors="replace")
+                detail = full[:300]
                 if e.code in (429, 500, 502, 503) and attempt < self.retries:
-                    wait = float(e.headers.get("retry-after") or min(2 ** attempt * 3, 30))
+                    try:
+                        wait = float(e.headers.get("retry-after") or min(2 ** attempt * 3, 30))
+                    except ValueError:
+                        wait = 30.0
+                    if wait > 90:  # daily-budget exhaustion, not a per-minute blip: fail loudly instead of sleeping for minutes
+                        raise RuntimeError(f"LLM rate limit, retry in {int(wait)}s: {detail}") from e
                     time.sleep(wait + 0.5)
                     continue
                 if e.code == 400 and "tool_use_failed" in detail:
-                    salvaged = self._salvage(detail, bool(tools))
+                    salvaged = self._salvage(full, [t.name for t in tools])
                     if salvaged is not None:
                         return salvaged
                 raise RuntimeError(f"LLM HTTP {e.code}: {detail}") from e
@@ -155,20 +161,28 @@ class OpenAICompatClient:
         return LLMResponse(msg.get("content") or None, calls, data.get("usage", {}).get("total_tokens", 0))
 
     @staticmethod
-    def _salvage(detail: str, tools_offered: bool) -> LLMResponse | None:
-        """gpt-oss sometimes emits a malformed tool call; recover it if we offered tools, else return its text."""
+    def _salvage(detail: str, tool_names: list[str]) -> LLMResponse | None:
+        """gpt-oss sometimes emits a malformed tool call. Recover what it meant:
+        - a real tool we offered -> a normal tool call
+        - any other name (typically "json") -> its arguments ARE the final JSON answer
+        - not parseable -> the raw text, so the agent's validator can ask for a retry"""
         import json
         import re
 
+        m = re.search(r'"failed_generation"\s*:\s*"((?:[^"\\]|\\.)*)"', detail, re.S)
+        if not m:
+            return None
         try:
-            gen = json.loads(detail.split('"failed_generation":', 1)[1].rsplit("}", 2)[0].strip())
-        except (IndexError, json.JSONDecodeError):
-            m = re.search(r'"failed_generation":"(.*)"\}', detail, re.S)
-            gen = m.group(1).replace('\\"', '"') if m else ""
-        try:
-            call = json.loads(gen) if isinstance(gen, str) else gen
+            gen = json.loads('"' + m.group(1) + '"')
         except json.JSONDecodeError:
             return None
-        if tools_offered and isinstance(call, dict) and "name" in call:
-            return LLMResponse(None, [ToolCall("salvaged-" + str(abs(hash(gen)) % 10**6), call["name"], call.get("arguments") or {})])
-        return LLMResponse(gen if isinstance(gen, str) else json.dumps(gen), [])
+        try:
+            call = json.loads(gen)
+        except json.JSONDecodeError:
+            return LLMResponse(gen, [])
+        if isinstance(call, dict) and "name" in call and "arguments" in call:
+            args = call["arguments"] if isinstance(call["arguments"], dict) else {}
+            if call["name"] in tool_names:
+                return LLMResponse(None, [ToolCall("salvaged-" + str(abs(hash(gen)) % 10**6), call["name"], args)])
+            return LLMResponse(json.dumps(args), [])
+        return LLMResponse(gen, [])

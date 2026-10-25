@@ -105,6 +105,14 @@ class Store:
             self.db.execute("INSERT OR REPLACE INTO events VALUES (?,?,?,?,?,?,?,?)",
                             (case_id, ev["seq"], ev["ts"], ev["type"], ev.get("agent"), ev.get("run"), ev.get("phase"), _J(extra)))
 
+    def abort_stale(self, keep: str | None = None) -> int:
+        """Cases still OPEN after a server restart can never finish: mark them ABORTED so the register stays truthful."""
+        with self._lock, self.db:
+            cur = self.db.execute(
+                "UPDATE cases SET status='ABORTED', status_reasons=?, updated_at=? WHERE status='OPEN' AND case_id IS NOT ?",
+                (_J(["The server stopped while this trial was running."]), time.time(), keep))
+            return cur.rowcount
+
     def delete_case(self, case_id: str) -> None:
         with self._lock, self.db:
             for t in ("cases", "runs", "claims", "evidence", "attacks", "responses", "rulings", "ranges", "events"):
