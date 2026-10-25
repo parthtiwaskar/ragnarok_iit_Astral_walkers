@@ -21,6 +21,9 @@ old one or set `NINE_REALMS_PROVIDER`. On start the server prints the provider a
 token) reports them too.
 | `MAX_TRIALS_PER_DAY`, `TRIAL_COOLDOWN_SECONDS` | no | Spending caps (defaults 20 per UTC day, 30 s per client). |
 | `MAX_LLM_CALLS`, `MAX_CASE_TOKENS` | no | Per-trial caps (defaults 150 calls, 2,500,000 tokens). |
+| `MAX_CASE_USD` | no | Per-trial spend cap in US$ (default 1.50), enforced for Anthropic, whose client prices every call. Odin keeps a 12% reserve of every cap so a capped trial still ends with his rulings and briefing. |
+| `MAX_USD_PER_DAY` | no | Total spend cap per UTC day across trials (default 0 = off). A trial starts only if today's spend plus its worst case (`MAX_CASE_USD`) fits, so the cap is never exceeded. |
+| `NINE_REALMS_EFFORT`, `NINE_REALMS_THINKING` | no | Anthropic speed/cost knobs: effort `low`/`medium`/`high`; `between_tools` turns off extended thinking on Claude Sonnet 5.5. |
 | `MAX_CONCURRENT_TRIALS` | no | Trials running at once (default 1). Raise it for the final round if the LLM key has the rate headroom. |
 | `LIVE_PACKS_DIR`, `WATCH_INTERVAL_SECONDS`, `MAX_UPLOAD_MB` | no | Live event-pack intake: watched drop folder (default `/data/live_packs`), poll seconds (0 = off), largest upload (default 50 MB). |
 | `ALLOWED_ORIGINS` | no | Extra browser origins allowed to POST (the same host always is). |
@@ -64,6 +67,8 @@ Run a single instance: the database is SQLite and trials run one at a time per p
 
 Why the entrypoint: Render mounts the disk owned by root. The container starts as root only to fix that ownership, then drops to an
 unprivileged user (uid 10001) before running the app. `docker compose` already starts unprivileged and skips this step.
+
+**Check a key before going live:** `python -m nine_realms.preflight` makes one tiny request and prints READY, or what is wrong in plain words.
 
 ## 4. Operations
 

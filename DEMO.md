@@ -1,20 +1,28 @@
 # Demo: Ragnarisk on the saved E5 run (≈ 6 minutes)
 
-The live LLM accounts have no credit, so the demo replays the saved real-LLM trial **`E5-24322`**.
-Everything on screen is real output from that run. Nothing is mocked.
+The sample question replays the saved real-LLM trial **`E5-24322`** instantly. Everything on screen is real output from
+that run; nothing is mocked. With a funded Claude key, judges' own questions run live.
 
 ## Before you start (T−10 min)
 
-```powershell
-# PowerShell, from the repo root
-$env:NINE_REALMS_EMBEDDER = "hash"
-backend\.venv\Scripts\python -m nine_realms.server --port 8765 --pack data/runemark
-```
+**Double-click `start-demo.bat`** in the repo folder. It:
+1. checks the AI key with one tiny request (well under a cent) and prints **READY** or what is wrong;
+2. starts the server on **http://127.0.0.1:8765** (this laptop only, no access token needed);
+3. opens the dashboard in your browser.
 
-Open **http://127.0.0.1:8765** full screen. Wait for `serving http://127.0.0.1:8765` in the terminal first.
+Keep its window open during the demo; closing it stops the server.
 
-> ⚠️ **Ask only the sample question.** It matches the saved trial, so "Get answer" shows it instantly. Any other
-> question starts a live trial, and with no balance on the LLM account that trial aborts on stage.
+### Putting in the Claude key ($5 credit)
+1. Open `.env` in the repo folder and paste the key after `ANTHROPIC_API_KEY=` (no quotes, no spaces).
+   `NINE_REALMS_PROVIDER=anthropic` is already set, so nothing else needs to change.
+2. Close the `start-demo.bat` window if it is open, then double-click it again. The key check must say **READY**.
+3. Budget guards already in `.env`: **`MAX_CASE_USD=1.00`** (hard spend cap per trial), **`MAX_TRIALS_PER_DAY=6`**,
+   model `claude-sonnet-5-5` at **`NINE_REALMS_EFFORT=medium`**. A capped trial still ends with Odin's rulings and briefing.
+4. Run **one** live trial before judging (Fast answer mode) to see the real time and cost. A live answer's sidebar shows
+   **AI cost** (dollars and number of AI calls) under Case.
+
+> ⚠️ **Without a working key, ask only the sample question.** It opens the saved trial instantly. Any other question
+> starts a live trial, which stops with a plain message ("The AI provider account has no credit left...").
 
 Backup: if the laptop dies, open **http://127.0.0.1:8765/?report=E5-24322** and print it, or open
 `runs/E5-24322/briefing.md` (the same findings, as text).

@@ -59,4 +59,47 @@ def test_tool_results_follow_their_assistant_turn_in_the_neutral_message_format(
     AnthropicClient(client=api, model="m").complete(system="S", messages=msgs, tools=TOOLS)
     sent = api.calls[0]["messages"]
     assert sent[1]["content"][0] == {"type": "tool_use", "id": "c1", "name": "a", "input": {"q": 1}}
-    assert sent[2] == {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "c1", "content": "result"}]}
+    # the newest turn carries the conversation cache marker; otherwise the shape is unchanged
+    assert sent[2] == {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "c1", "content": "result",
+                                                     "cache_control": {"type": "ephemeral"}}]}
+
+
+def test_the_conversation_so_far_is_cached_without_changing_the_callers_messages():
+    api = FakeAPI()
+    msgs = [{"role": "user", "content": "first"}, {"role": "assistant", "content": "ok"}, {"role": "user", "content": "second"}]
+    AnthropicClient(client=api, model="m").complete(system="S", messages=msgs, tools=[])
+    sent = api.calls[0]["messages"]
+    assert sent[-1]["content"] == [{"type": "text", "text": "second", "cache_control": {"type": "ephemeral"}}]
+    assert sent[0]["content"] == "first"                          # only the newest turn is marked
+    assert msgs[-1]["content"] == "second"                        # the agent's own history is untouched
+
+
+def test_each_call_reports_its_dollar_cost_from_the_price_table():
+    from nine_realms.llm import anthropic_cost
+    r = AnthropicClient(client=FakeAPI(), model="claude-sonnet-5-5").complete(system="S", messages=[{"role": "user", "content": "x"}], tools=[])
+    # 100 input at $2, 20 output at $10, 500 cache writes at $2.50, 2000 cache reads at $0.20 (per million)
+    assert abs(r.cost_usd - (100 * 2 + 20 * 10 + 500 * 2.5 + 2000 * 0.2) / 1e6) < 1e-12
+    assert anthropic_cost("claude-unlisted", 1_000_000, 0) == 4.0  # unknown models bill at the dearest listed rate
+
+
+def test_effort_and_thinking_knobs_reach_the_request_and_invalid_combinations_are_dropped(monkeypatch):
+    monkeypatch.setenv("NINE_REALMS_EFFORT", "low")
+    api = FakeAPI()
+    AnthropicClient(client=api, model="claude-sonnet-5-5").complete(system="S", messages=[{"role": "user", "content": "x"}], tools=[])
+    assert api.calls[0]["output_config"] == {"effort": "low"} and "thinking" not in api.calls[0]
+
+    monkeypatch.setenv("NINE_REALMS_THINKING", "between_tools")
+    monkeypatch.setenv("NINE_REALMS_EFFORT", "max")             # the API rejects between_tools above high
+    api = FakeAPI()
+    AnthropicClient(client=api, model="claude-sonnet-5-5").complete(system="S", messages=[{"role": "user", "content": "x"}], tools=[])
+    assert api.calls[0]["thinking"] == {"type": "between_tools"} and api.calls[0]["output_config"] == {"effort": "high"}
+
+    api = FakeAPI()                                               # between_tools exists only on Sonnet 5.5
+    AnthropicClient(client=api, model="claude-haiku-5-5").complete(system="S", messages=[{"role": "user", "content": "x"}], tools=[])
+    assert "thinking" not in api.calls[0]
+
+    monkeypatch.delenv("NINE_REALMS_THINKING")
+    monkeypatch.setenv("NINE_REALMS_EFFORT", "turbo")             # not a real level: send nothing rather than fail
+    api = FakeAPI()
+    AnthropicClient(client=api, model="claude-sonnet-5-5").complete(system="S", messages=[{"role": "user", "content": "x"}], tools=[])
+    assert "output_config" not in api.calls[0]

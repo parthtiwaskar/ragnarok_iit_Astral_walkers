@@ -268,8 +268,10 @@ def test_oversized_uploads_are_refused_before_they_are_read(live):
     live.app.cfg.max_upload_mb = 1
     try:
         assert raw(live, "POST", "/api/ingest", b"0" * (2 * 1024 * 1024))[0] == 413
-    except (ConnectionResetError, BrokenPipeError):
-        pass  # the server refused without reading the body; a client may see a reset instead of the 413
+    except ConnectionError:
+        # the server refused without reading the body, so the client may see the connection close instead of the 413:
+        # a reset or broken pipe on Linux, ConnectionAbortedError (WinError 10053) on Windows. All are ConnectionError.
+        pass
     assert len(live.app.corpus.list_packs()) == 1  # nothing was ingested
 
 

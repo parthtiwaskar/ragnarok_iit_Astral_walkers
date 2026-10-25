@@ -38,6 +38,8 @@ class Limits:
     max_claims_per_side: int = 8
     max_tool_result_chars: int = 5000
     max_context_chars: int = 22000  # older tool results are shrunk to fit (0 = unlimited)
+    max_usd: float = 0.0  # hard spend cap per case in US$, for providers whose client reports cost (0 = no dollar cap)
+    odin_reserve: float = 0.12  # share of each cap only Odin may spend, so a capped case still gets his rulings and briefing
 
 
 class Budget:
@@ -45,19 +47,27 @@ class Budget:
         self.limits = limits
         self.llm_calls = 0
         self.tokens = 0
+        self.usd = 0.0
         self._lock = threading.Lock()
 
-    def charge_llm(self) -> None:
+    def _cap(self, limit: float, agent: str | None) -> float:
+        """Every agent but Odin stops short of a cap; the remainder is his, to judge and write the briefing."""
+        return limit if agent == "ODIN" else limit * (1 - self.limits.odin_reserve)
+
+    def charge_llm(self, agent: str | None = None) -> None:
         with self._lock:
-            if self.llm_calls >= self.limits.max_llm_calls:
+            if self.llm_calls >= self._cap(self.limits.max_llm_calls, agent):
                 raise LimitHit(f"max_llm_calls={self.limits.max_llm_calls}")
-            if self.tokens >= self.limits.max_tokens:
+            if self.tokens >= self._cap(self.limits.max_tokens, agent):
                 raise LimitHit(f"max_tokens={self.limits.max_tokens}")
+            if self.limits.max_usd and self.usd >= self._cap(self.limits.max_usd, agent):
+                raise LimitHit(f"max_usd={self.limits.max_usd}")
             self.llm_calls += 1
 
-    def add_tokens(self, tokens: int) -> None:
+    def add_tokens(self, tokens: int, usd: float = 0.0) -> None:
         with self._lock:
             self.tokens += tokens
+            self.usd += usd
 
 
 def _obj(props: dict[str, Any], required: list[str] | None = None) -> dict[str, Any]:

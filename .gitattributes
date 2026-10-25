@@ -3,3 +3,4 @@ backend/tests/fixtures/** -text
 *.pdf binary
 *.docx binary
 *.png binary
+*.bat text eol=crlf

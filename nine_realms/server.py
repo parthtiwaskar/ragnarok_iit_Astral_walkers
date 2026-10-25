@@ -76,6 +76,13 @@ def _int(name: str, default: int) -> int:
         return default
 
 
+def _float(name: str, default: float) -> float:
+    try:
+        return float(os.environ.get(name, default))
+    except ValueError:
+        return default
+
+
 def default_pack() -> str:
     """The Runemark pack: RUNEMARK_PACK, else data/runemark (team repo layout), else the numbered dev-pack folder."""
     for cand in (os.environ.get("RUNEMARK_PACK", ""), ROOT / "data" / "runemark", ROOT / "03_Ragnarok Trial of the Nine Realms" / "dev_pack_E5"):
@@ -100,6 +107,8 @@ class Config:
     cooldown_s: int = 30
     max_llm_calls: int = 150
     max_case_tokens: int = 2_500_000
+    max_case_usd: float = 1.50  # per-trial spend cap where the provider reports cost (Anthropic); 0 = off
+    max_usd_per_day: float = 0.0  # total spend cap per UTC day across trials; a trial starts only if it fits; 0 = off
     log_requests: bool = False
     live_dir: str = str(ROOT / "data" / "live_packs")
     watch_interval: float = 5.0
@@ -120,7 +129,7 @@ class Config:
             allowed_origins={o.strip().rstrip("/") for o in os.environ.get("ALLOWED_ORIGINS", "").split(",") if o.strip()},
             trust_proxy=os.environ.get("TRUST_PROXY", "") == "1",
             max_trials_per_day=_int("MAX_TRIALS_PER_DAY", 20), cooldown_s=_int("TRIAL_COOLDOWN_SECONDS", 30),
-            max_llm_calls=_int("MAX_LLM_CALLS", 150), max_case_tokens=_int("MAX_CASE_TOKENS", 2_500_000),
+            max_llm_calls=_int("MAX_LLM_CALLS", 150), max_case_tokens=_int("MAX_CASE_TOKENS", 2_500_000), max_case_usd=_float("MAX_CASE_USD", 1.50), max_usd_per_day=_float("MAX_USD_PER_DAY", 0.0),
             log_requests=os.environ.get("LOG_LEVEL", "info").lower() in ("info", "debug"),
             live_dir=os.environ.get("LIVE_PACKS_DIR") or (str(Path(data) / "live_packs") if data else str(ROOT / "data" / "live_packs")),
             watch_interval=float(os.environ.get("WATCH_INTERVAL_SECONDS", 5)), max_upload_mb=_int("MAX_UPLOAD_MB", 50),
@@ -231,6 +240,13 @@ class App:
         today = now - (now % 86400)
         if self.store.count_started_since(today) >= self.cfg.max_trials_per_day:
             return False, f"Daily trial limit reached ({self.cfg.max_trials_per_day}). Try again tomorrow.", int(today + 86400 - now)
+        if self.cfg.max_usd_per_day:
+            # count what finished trials spent, plus the worst case for trials still running and for this one
+            spent = self.store.spent_since(today)
+            committed = spent + self.cfg.max_case_usd * (len(self._running) + 1)
+            if committed > self.cfg.max_usd_per_day + 1e-9:
+                return (False, f"Today's AI budget is used up: ${spent:.2f} of ${self.cfg.max_usd_per_day:.2f} spent, and a trial can cost up "
+                        f"to ${self.cfg.max_case_usd:.2f}. Saved answers still work; new trials resume tomorrow (UTC).", int(today + 86400 - now))
         wait = self._last_start.get(client, 0) + self.cfg.cooldown_s - now
         if wait > 0:
             return False, f"Please wait {int(wait) + 1}s before starting another trial.", int(wait) + 1
@@ -250,7 +266,8 @@ class App:
     def _run(self, case_id: str, question: str, as_of: str, options: dict[str, int]) -> None:
         try:
             bus = EventBus(sink=lambda ev: self.store.add_event(case_id, ev))
-            base: dict[str, Any] = {"max_llm_calls": self.cfg.max_llm_calls, "max_tokens": self.cfg.max_case_tokens}
+            base: dict[str, Any] = {"max_llm_calls": self.cfg.max_llm_calls, "max_tokens": self.cfg.max_case_tokens,
+                                    "max_usd": self.cfg.max_case_usd}
             if self.provider not in LARGE_CONTEXT:
                 base |= {"max_tool_result_chars": 3500, "max_context_chars": 13000}  # fit small per-minute token budgets
             thing = Thing(make_llm(self.provider), self.corpus, limits=Limits(**base, **options), bus=bus, memory_dir=self.cfg.memory_dir,
@@ -315,6 +332,17 @@ def make_handler(app: App):
                 return True
             got = self.headers.get("Authorization", "")
             return got.startswith("Bearer ") and hmac.compare_digest(got[7:].encode(), cfg.token.encode())
+
+        def _discard_small_body(self, limit: int = 64 * 1024) -> None:
+            """Read and drop a small request body before an early rejection. Closing a socket that still holds unread
+            request data resets the connection on some systems (Windows), so the client would see a dropped connection
+            instead of the 401/403/404. Large bodies are deliberately left unread: they are refused without reading."""
+            try:
+                n = int(self.headers.get("Content-Length") or 0)
+            except ValueError:
+                return
+            if 0 < n <= limit:
+                self.rfile.read(n)
 
         def _origin_ok(self) -> bool:
             origin = self.headers.get("Origin")
@@ -441,12 +469,15 @@ def make_handler(app: App):
             try:
                 path = urlparse(self.path).path.rstrip("/")
                 if not self._origin_ok():
+                    self._discard_small_body()
                     return self._json(403, {"error": "cross-origin request refused"})
                 if not self._authorized():
+                    self._discard_small_body()
                     return self._json(401, {"error": "access token required"}, {"WWW-Authenticate": "Bearer"})
                 if path == "/api/ingest" or path == "/api/ingest/scan":
                     return self._ingest(path)
                 if path != "/api/cases":
+                    self._discard_small_body()
                     return self._json(404, {"error": "not found"})
                 body = json.loads(self.rfile.read(min(int(self.headers.get("Content-Length", 0)), 20_000)) or b"{}")
                 question = str(body.get("question", "")).strip()
@@ -523,7 +554,7 @@ def main(argv: list[str] | None = None) -> int:
     else:
         print(f"live trials: DISABLED - {why}")
     print(f"auth: {'access token required' if cfg.token else 'OFF (loopback only)'} · limits: {cfg.max_trials_per_day} trials/day, "
-          f"{cfg.cooldown_s}s cooldown · {cfg.max_concurrent} concurrent · mode: {'production' if cfg.production else 'development'}")
+          f"{cfg.cooldown_s}s cooldown · ${cfg.max_case_usd:.2f} spend cap per trial{f', ${cfg.max_usd_per_day:.2f}/day' if cfg.max_usd_per_day else ''} · {cfg.max_concurrent} concurrent · mode: {'production' if cfg.production else 'development'}")
     httpd = ThreadingHTTPServer((cfg.host, cfg.port), make_handler(app))
     signal.signal(signal.SIGTERM, lambda *_: threading.Thread(target=httpd.shutdown, daemon=True).start())  # graceful stop in containers
     print(f"serving http://{cfg.host}:{cfg.port}", flush=True)

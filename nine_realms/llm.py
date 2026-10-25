@@ -31,6 +31,7 @@ class LLMResponse:
     text: str | None = None
     tool_calls: list[ToolCall] = field(default_factory=list)
     tokens: int = 0
+    cost_usd: float = 0.0  # known only for providers with a price table (Anthropic); 0 means "not metered"
 
 
 class LLMClient(Protocol):
@@ -51,6 +52,53 @@ class FakeLLM:
         return self.policy(system, messages, tools)
 
 
+# US$ per million tokens: input, output, cache write (5-minute TTL is 1.25x input), cache read.
+ANTHROPIC_PRICES: dict[str, tuple[float, float, float, float]] = {
+    "claude-opus-5-5": (4.00, 20.00, 5.00, 0.20),
+    "claude-sonnet-5-5": (2.00, 10.00, 2.50, 0.20),
+    "claude-haiku-5-5": (0.10, 0.50, 0.125, 0.01),
+}
+_PRICE_UNKNOWN = ANTHROPIC_PRICES["claude-opus-5-5"]  # an unlisted model is billed at the dearest listed rate, never as free
+
+
+def anthropic_cost(model: str, input_tokens: int, output_tokens: int, cache_written: int = 0, cache_read: int = 0) -> float:
+    p_in, p_out, p_write, p_read = ANTHROPIC_PRICES.get(model, _PRICE_UNKNOWN)
+    return (input_tokens * p_in + output_tokens * p_out + cache_written * p_write + cache_read * p_read) / 1_000_000
+
+
+def anthropic_tuning(model: str) -> dict[str, Any]:
+    """Optional speed/cost knobs from the environment (unset = the model's defaults).
+
+    NINE_REALMS_EFFORT: low | medium | high | xhigh | max (lower is faster and cheaper).
+    NINE_REALMS_THINKING=between_tools: no extended thinking (Claude Sonnet 5.5 only; effort must then be high or below).
+    Combinations the API would reject are dropped here rather than failing a whole trial."""
+    out: dict[str, Any] = {}
+    effort = os.environ.get("NINE_REALMS_EFFORT", "").strip().lower()
+    thinking = os.environ.get("NINE_REALMS_THINKING", "").strip().lower()
+    if thinking == "between_tools" and model == "claude-sonnet-5-5":
+        out["thinking"] = {"type": "between_tools"}
+        if effort in ("xhigh", "max"):
+            effort = "high"
+    if effort in ("low", "medium", "high", "xhigh", "max"):
+        out["output_config"] = {"effort": effort}
+    return out
+
+
+def _cache_last_turn(msgs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Mark the newest message cacheable, so the next step of the same agent turn re-reads the whole conversation so far
+    from cache instead of paying for it again. Copies what it marks; the caller's messages are not changed."""
+    if not msgs:
+        return msgs
+    last = dict(msgs[-1])
+    content = last["content"]
+    blocks = [{"type": "text", "text": content}] if isinstance(content, str) else [dict(b) for b in content]
+    if not blocks:
+        return msgs
+    blocks[-1]["cache_control"] = {"type": "ephemeral"}
+    last["content"] = blocks
+    return [*msgs[:-1], last]
+
+
 class AnthropicClient:
     """Anthropic Messages API. The system prompt and tool list are identical on every call an agent makes, so they are marked
     cacheable (ANTHROPIC_PROMPT_CACHE=0 turns it off): repeat calls read them from cache, which is cheaper and faster.
@@ -65,6 +113,7 @@ class AnthropicClient:
         self.model = model or os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-5-5")
         self.max_tokens = max_tokens
         self.cache = (os.environ.get("ANTHROPIC_PROMPT_CACHE", "1") != "0") if cache is None else cache
+        self.tuning = anthropic_tuning(self.model)
 
     def complete(self, *, system: str, messages: list[dict[str, Any]], tools: list[ToolSpec]) -> LLMResponse:
         msgs: list[dict[str, Any]] = []
@@ -87,12 +136,14 @@ class AnthropicClient:
         tool_defs = [{"name": t.name, "description": t.description, "input_schema": t.parameters} for t in tools]
 
         def request(cached: bool) -> Any:
-            kwargs: dict[str, Any] = {"model": self.model, "max_tokens": self.max_tokens, "messages": msgs,
+            kwargs: dict[str, Any] = {"model": self.model, "max_tokens": self.max_tokens,
+                                      "messages": _cache_last_turn(msgs) if cached else msgs,
                                       "system": [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}] if cached else system}
             if tool_defs:
                 kwargs["tools"] = [dict(t) for t in tool_defs]
                 if cached:
                     kwargs["tools"][-1]["cache_control"] = {"type": "ephemeral"}  # caches the whole tool list up to here
+            kwargs.update(self.tuning)
             return self._client.messages.create(**kwargs)
 
         try:
@@ -106,10 +157,10 @@ class AnthropicClient:
         text = "".join(b.text for b in resp.content if b.type == "text") or None
         calls = [ToolCall(b.id, b.name, dict(b.input)) for b in resp.content if b.type == "tool_use"]
         u = resp.usage
+        written, read = (getattr(u, "cache_creation_input_tokens", 0) or 0), (getattr(u, "cache_read_input_tokens", 0) or 0)
         # cache reads cost about a tenth of normal input, so they count a tenth against the spending cap
-        tokens = u.input_tokens + u.output_tokens + (getattr(u, "cache_creation_input_tokens", 0) or 0) \
-            + int(0.1 * (getattr(u, "cache_read_input_tokens", 0) or 0))
-        return LLMResponse(text, calls, tokens)
+        tokens = u.input_tokens + u.output_tokens + written + int(0.1 * read)
+        return LLMResponse(text, calls, tokens, cost_usd=anthropic_cost(self.model, u.input_tokens, u.output_tokens, written, read))
 
 
 class OpenAICompatClient:
