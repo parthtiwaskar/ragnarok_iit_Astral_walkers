@@ -63,6 +63,13 @@ class Memory:
             for _, id_, kind, text, case_id, kdate in scored[:k]
         ]
 
+    def items(self, tag_prefix: str = "", limit: int = 200) -> list[dict[str, Any]]:
+        """Memories with their tags, newest first. Used for deterministic memory rules and the read-only inspector."""
+        with self._lock:
+            rows = self._db.execute("SELECT id,kind,text,case_id,knowledge_date,tags FROM memories WHERE tags LIKE ? ORDER BY id DESC LIMIT ?",
+                                    (tag_prefix + "%", limit)).fetchall()
+        return [dict(zip(("id", "kind", "text", "case_id", "knowledge_date", "tags"), r)) for r in rows]
+
     def all(self) -> list[dict[str, Any]]:
         with self._lock:
             rows = self._db.execute("SELECT id,kind,text,case_id,knowledge_date FROM memories").fetchall()

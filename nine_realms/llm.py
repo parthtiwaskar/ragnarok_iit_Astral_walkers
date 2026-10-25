@@ -52,12 +52,19 @@ class FakeLLM:
 
 
 class AnthropicClient:
-    def __init__(self, model: str | None = None, max_tokens: int = 4096) -> None:
-        import anthropic  # imported lazily so tests need no SDK
+    """Anthropic Messages API. The system prompt and tool list are identical on every call an agent makes, so they are marked
+    cacheable (ANTHROPIC_PROMPT_CACHE=0 turns it off): repeat calls read them from cache, which is cheaper and faster.
+    If the API ever rejects the cache markers the client retries once without them and stays uncached."""
 
-        self._client = anthropic.Anthropic()
+    def __init__(self, model: str | None = None, max_tokens: int = 4096, client: Any = None, cache: bool | None = None) -> None:
+        if client is None:
+            import anthropic  # imported lazily so tests need no SDK
+
+            client = anthropic.Anthropic()
+        self._client = client
         self.model = model or os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-5-5")
         self.max_tokens = max_tokens
+        self.cache = (os.environ.get("ANTHROPIC_PROMPT_CACHE", "1") != "0") if cache is None else cache
 
     def complete(self, *, system: str, messages: list[dict[str, Any]], tools: list[ToolSpec]) -> LLMResponse:
         msgs: list[dict[str, Any]] = []
@@ -77,17 +84,32 @@ class AnthropicClient:
                     msgs[-1]["content"].append(block)
                 else:
                     msgs.append({"role": "user", "content": [block]})
-        kwargs: dict[str, Any] = {}
-        if tools:
-            kwargs["tools"] = [
-                {"name": t.name, "description": t.description, "input_schema": t.parameters} for t in tools
-            ]
-        resp = self._client.messages.create(
-            model=self.model, max_tokens=self.max_tokens, system=system, messages=msgs, **kwargs
-        )
+        tool_defs = [{"name": t.name, "description": t.description, "input_schema": t.parameters} for t in tools]
+
+        def request(cached: bool) -> Any:
+            kwargs: dict[str, Any] = {"model": self.model, "max_tokens": self.max_tokens, "messages": msgs,
+                                      "system": [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}] if cached else system}
+            if tool_defs:
+                kwargs["tools"] = [dict(t) for t in tool_defs]
+                if cached:
+                    kwargs["tools"][-1]["cache_control"] = {"type": "ephemeral"}  # caches the whole tool list up to here
+            return self._client.messages.create(**kwargs)
+
+        try:
+            resp = request(self.cache)
+        except Exception as exc:
+            if self.cache and "cache_control" in str(exc).lower():
+                self.cache = False
+                resp = request(False)
+            else:
+                raise
         text = "".join(b.text for b in resp.content if b.type == "text") or None
         calls = [ToolCall(b.id, b.name, dict(b.input)) for b in resp.content if b.type == "tool_use"]
-        return LLMResponse(text, calls, resp.usage.input_tokens + resp.usage.output_tokens)
+        u = resp.usage
+        # cache reads cost about a tenth of normal input, so they count a tenth against the spending cap
+        tokens = u.input_tokens + u.output_tokens + (getattr(u, "cache_creation_input_tokens", 0) or 0) \
+            + int(0.1 * (getattr(u, "cache_read_input_tokens", 0) or 0))
+        return LLMResponse(text, calls, tokens)
 
 
 class OpenAICompatClient:

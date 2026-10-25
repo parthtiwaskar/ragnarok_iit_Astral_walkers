@@ -63,7 +63,8 @@ def _payload(first: str) -> dict[str, Any]:
 
 
 def make_policy(*, verified: bool = True, loki_garbage: bool = False, thor_attack_garbage: bool = False, generic_first: bool = False,
-                loki_targets_tier1: bool = False, thor_response: str = "normal", attack_all: bool = False, concede_all: bool = False):
+                loki_targets_tier1: bool = False, thor_response: str = "normal", attack_all: bool = False, concede_all: bool = False,
+                thor_repeats: str = ""):
     def policy(system: str, messages: list[dict[str, Any]], tools: list[Any]) -> LLMResponse:
         role = re.match(r"ROLE: (\w+)", system).group(1)  # type: ignore[union-attr]
         first = messages[0]["content"]
@@ -128,6 +129,10 @@ def make_policy(*, verified: bool = True, loki_garbage: bool = False, thor_attac
                     doc = "ORV-0005"
                     claims = [{"text": "Wheat reserves cover 4 months of imports", "kind": "fact", "evidence": [ev(doc)],
                                "estimate": wheat | ({"low": 45, "high": 60} if thor else {"low": 10, "high": 20})}]
+                    if thor and thor_repeats:  # Thor tries to re-argue the claim he conceded in run 1 (a Tier 4 rumour)
+                        evid = [ev("ORV-0003")] + ([ev("ORV-0005")] if thor_repeats == "new_evidence" else [])
+                        claims.insert(0, {"text": "Midgard wheat imports will collapse by 90%", "kind": "fact", "evidence": evid,
+                                          "estimate": wheat | {"low": 80, "high": 90}})
                 return out({"claims": claims})
             retried = sum(1 for m in messages if m["role"] == "user") > 1  # the agent was re-prompted after an invalid reply
             if "Cross-examination" in task:

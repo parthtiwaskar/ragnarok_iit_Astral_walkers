@@ -33,7 +33,7 @@ class Srv:
         # a trial that finishes instantly, so the tests never touch an LLM
         def fake_run(case_id, *a):
             with self.app._lock:
-                self.app.running = None
+                self.app._running.pop(case_id, None)
         self.app._run = fake_run
         self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(self.app))
         self.app.cfg.port = self.httpd.server_address[1]
@@ -187,3 +187,130 @@ def test_head_requests_work_for_health_checks_and_return_no_body(srv):
     c.request("HEAD", "/api/health")
     r = c.getresponse()
     assert r.status == 200 and r.read() == b"" and int(r.getheader("Content-Length")) > 0 and r.getheader("X-Frame-Options") == "DENY"
+
+
+# ---------------------------------------------------------------------------------------------------------------------
+# Live pack intake (final round): upload, drop folder, hostile archives, as-of parsing, concurrent trials
+# ---------------------------------------------------------------------------------------------------------------------
+import io
+import zipfile
+
+from nine_realms.livepacks import LivePacks
+from nine_realms.rehearsal import make_pack
+
+
+def zip_dir(path: Path) -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        for p in sorted(path.rglob("*")):
+            if p.is_file():
+                z.write(p, f"{path.name}/{p.relative_to(path)}")  # wrapped in one folder, as zips usually are
+    return buf.getvalue()
+
+
+@pytest.fixture()
+def live(tmp_path):
+    os.environ["NINE_REALMS_EMBEDDER"] = "hash"
+    embed._cached = None
+    corpus = LocalCorpus(PACK, tmp_path / "c.sqlite")
+    s = Srv(corpus)
+    s.app.live = LivePacks(corpus, tmp_path / "live", 0)
+    s.tmp = tmp_path
+    yield s
+    s.close()
+
+
+def raw(srv, method, path, data=b"", headers=None):
+    c = http.client.HTTPConnection("127.0.0.1", srv.app.cfg.port, timeout=30)
+    c.request(method, path, data, {**AUTH, **(headers or {})})
+    r = c.getresponse()
+    body = r.read()
+    return r.status, (json.loads(body) if body[:1] in (b"{", b"[") else body)
+
+
+def test_a_zipped_pack_uploaded_live_is_searchable_and_reported(live):
+    expect = make_pack(live.tmp / "pack_e9", source_pack=PACK)
+    code, body = raw(live, "POST", "/api/ingest", zip_dir(live.tmp / "pack_e9"), {"X-Pack-Name": "pack_e9.zip", "Content-Type": "application/zip"})
+    assert code == 201 and body["report"]["ingested"] >= 15 and "KET-0013" in body["report"]["quarantined"]
+    packs = live.call("GET", "/api/packs", headers=AUTH)[2]["packs"]
+    assert len(packs) == 2 and {p["event_id"] for p in packs} == {"E5", "E9"}
+    found = live.call("GET", "/api/documents?prefix=KET&limit=100", headers=AUTH)[2]
+    assert found["total"] >= 15 and any("TRUNCATED" in "".join(d["flags"]) for d in found["documents"])
+    assert live.call("GET", f"/api/packs/{body['pack_id']}", headers=AUTH)[2]["report"]["trade"]["rows_flagged"]
+
+
+def test_upload_needs_the_token_and_rejects_non_zip_input(live):
+    assert live.call("POST", "/api/ingest")[0] == 401
+    assert raw(live, "POST", "/api/ingest", b"this is not a zip")[0] == 400
+    assert raw(live, "POST", "/api/ingest", b"")[0] == 400
+
+
+def test_a_zip_slip_archive_is_refused_and_writes_nothing_outside(live):
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("../../escaped.txt", "DOC_ID: X\nPUB_DATE: 2027-01-01\n---\nhello" + "x" * 80)
+    code, body = raw(live, "POST", "/api/ingest", buf.getvalue())
+    assert code == 400 and "unsafe path" in body["error"]
+    assert not (live.tmp.parent / "escaped.txt").exists() and not (live.tmp / "escaped.txt").exists()
+
+
+def test_a_symlink_inside_an_archive_is_refused(live):
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        info = zipfile.ZipInfo("link.txt")
+        info.external_attr = (0o120777 << 16)
+        z.writestr(info, "/etc/passwd")
+    code, body = raw(live, "POST", "/api/ingest", buf.getvalue())
+    assert code == 400 and "symbolic link" in body["error"]
+
+
+def test_oversized_uploads_are_refused_before_they_are_read(live):
+    live.app.cfg.max_upload_mb = 1
+    try:
+        assert raw(live, "POST", "/api/ingest", b"0" * (2 * 1024 * 1024))[0] == 413
+    except (ConnectionResetError, BrokenPipeError):
+        pass  # the server refused without reading the body; a client may see a reset instead of the 413
+    assert len(live.app.corpus.list_packs()) == 1  # nothing was ingested
+
+
+def test_dropping_a_folder_or_a_zip_into_the_watched_directory_ingests_it(live):
+    drop = live.tmp / "live"
+    make_pack(drop / "pack_e9", source_pack=PACK)
+    (drop / "pack_e9.zip").write_bytes(b"")  # an unrelated empty file must not break the scan
+    code, body = raw(live, "POST", "/api/ingest/scan")
+    assert code == 200 and body["ingested"] == ["pack-e9"]
+    assert raw(live, "POST", "/api/ingest/scan")[1]["ingested"] == []  # unchanged packs are skipped on the next scan
+    zip_pack = live.tmp / "z" / "pack_e7"
+    make_pack(zip_pack, source_pack=PACK, event_id="E7")
+    (drop / "second_pack.zip").write_bytes(zip_dir(zip_pack))
+    body = raw(live, "POST", "/api/ingest/scan")[1]
+    assert "second-pack" in body["ingested"]
+
+
+def test_a_broken_pack_in_the_drop_folder_is_reported_and_does_not_stop_the_server(live):
+    bad = live.tmp / "live" / "broken"
+    (bad / "docs").mkdir(parents=True)
+    (bad / "manifest.json").write_text("{not json", encoding="utf-8")
+    (bad / "docs" / "a.txt").write_bytes(b"")
+    code, body = raw(live, "POST", "/api/ingest/scan")
+    assert code == 200
+    assert live.call("GET", "/api/health")[0] == 200 and live.call("GET", "/api/summary", headers=AUTH)[0] == 200
+
+
+def test_the_as_of_date_is_read_from_the_question(live):
+    live.app.cfg.cooldown_s = 0
+    code, _, body = live.call("POST", "/api/cases", {"question": "As of 12 March 2027, how exposed is Midgard to the Orvan corridor ending?"}, AUTH)
+    assert code == 202
+    assert live.app.store.load_case(body["case_id"])["as_of"] == "2027-03-12"
+    code, _, body = live.call("POST", "/api/cases", {"question": "How exposed is Midgard to the Orvan corridor ending? (no date)"}, AUTH)
+    assert live.app.store.load_case(body["case_id"])["as_of"] == live.app.corpus.pack_as_of  # falls back to the newest pack's date
+
+
+def test_several_trials_can_run_at_once_when_allowed(corpus):
+    s = Srv(corpus, cooldown_s=0, max_concurrent=2)
+    try:
+        s.app._run = lambda *a: None  # trials stay "running"
+        assert [s.call("POST", "/api/cases", Q, AUTH)[0] for _ in range(3)] == [202, 202, 409]
+        assert len(s.call("GET", "/api/health", headers=AUTH)[2]["running_ids"]) == 2
+    finally:
+        s.close()

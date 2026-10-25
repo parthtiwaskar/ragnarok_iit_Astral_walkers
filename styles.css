@@ -603,6 +603,37 @@ button:active:not(:disabled) { transform: scale(.98); }
 .dialog input[type="password"], .dialog input[type="text"] { width: 100%; padding: 11px; border: 1px solid #2a384b; border-radius: 5px; background: #0c1421; color: #e3ebf5; font: 14px var(--mono); }
 .token-error { margin: 10px 0 0; color: var(--rose); font-size: 12px; }
 
+/* ---- Data intake ---- */
+.intake-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; } .upload-btn { cursor: pointer; }
+.pack-row { border-top: 1px solid var(--border-soft); } .pack-row summary { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; justify-content: space-between; padding: 14px 0; cursor: pointer; list-style: none; }
+.pack-row summary::-webkit-details-marker { display: none; } .pack-row summary::before { content: "›"; margin-right: 10px; color: var(--subtle); transition: transform .15s; } .pack-row[open] summary::before { transform: rotate(90deg); }
+.pack-name { flex: 1 1 220px; display: grid; gap: 2px; } .pack-name b { color: var(--text); font-size: 13.5px; } .pack-name small { color: var(--subtle); font: 11px var(--mono); }
+.pack-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.pack-chip { padding: 3px 9px; border-radius: 99px; font: 600 11px var(--mono); background: var(--surface-raised); color: var(--muted); }
+.pack-chip.ok { color: var(--green); background: color-mix(in srgb, var(--green) 11%, transparent); } .pack-chip.warn { color: var(--amber); background: color-mix(in srgb, var(--amber) 11%, transparent); } .pack-chip.bad { color: var(--rose); background: color-mix(in srgb, var(--rose) 11%, transparent); }
+.pack-row h4 { margin: 14px 0 6px; font: 600 12px var(--mono); color: var(--muted); text-transform: uppercase; letter-spacing: .04em; } .pack-row h4 em { font-style: normal; color: var(--subtle); margin-left: 6px; }
+.report-list { margin: 0 0 6px; padding-left: 18px; color: #cfd8e6; font-size: 12.5px; line-height: 1.7; } .report-list b { color: var(--cyan); font-family: var(--mono); font-weight: 500; margin-right: 6px; }
+.dropzone { margin-top: 12px; padding: 18px; border: 1.5px dashed var(--border); border-radius: 12px; text-align: center; color: var(--subtle); font-size: 12.5px; transition: border-color .15s, background .15s; }
+.dropzone.over { border-color: var(--cyan); background: color-mix(in srgb, var(--cyan) 7%, transparent); color: var(--cyan); }
+
+.exposure-table { width: 100%; border-collapse: collapse; font-size: 13px; } .exposure-table th { padding: 0 10px 10px 0; text-align: left; color: var(--subtle); font: 500 10.5px var(--mono); letter-spacing: .04em; text-transform: uppercase; white-space: nowrap; }
+.exposure-table td { padding: 11px 10px 11px 0; border-top: 1px solid var(--border-soft); color: #cfd8e6; white-space: nowrap; } .exposure-table td b { color: var(--text); font-weight: 600; } .exposure-table .odin-cell b { color: var(--cyan); } .exposure-table .muted { color: var(--subtle); }
+@media (max-width: 650px) { .exposure-table { font-size: 12.5px; } }
+
+.mem-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
+.mem-card { padding: 14px 16px; border: 1px solid var(--border-soft); border-radius: 12px; background: var(--surface); } .mem-card header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; } .mem-card header .badge { margin-left: auto; }
+.mem-list { margin: 6px 0 0; padding-left: 18px; color: #cfd8e6; font-size: 12.5px; line-height: 1.6; } .mem-list b { color: var(--cyan); font-weight: 600; } .mem-list small { color: var(--subtle); font: 10.5px var(--mono); }
+
+/* acceptance checklist */
+.acc-list { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 2px; }
+.acc-row { display: grid; grid-template-columns: 22px 1fr; gap: 10px; padding: 9px 0; border-top: 1px solid var(--border-soft); }
+.acc-row strong { display: block; font-size: 13.5px; font-weight: 600; line-height: 1.35; }
+.acc-row small { display: block; margin-top: 2px; color: var(--muted); font-size: 12px; line-height: 1.4; }
+.acc-mark { font-weight: 700; text-align: center; }
+.acc-row.ok .acc-mark { color: #34d399; }
+.acc-row.bad .acc-mark { color: #f87171; }
+.acc-row.manual .acc-mark { color: #94a3b8; }
+
 /* ==== Clean shell: top tabs instead of the sidebar ==================================== */
 .main-area { margin-left: 0; }
 .topnav { position: sticky; top: 0; z-index: 6; display: flex; align-items: center; gap: 28px; height: 58px; padding: 0 clamp(16px, 4vw, 48px); border-bottom: 1px solid var(--border-soft); background: #090e1af2; backdrop-filter: blur(14px); }

@@ -33,7 +33,7 @@ class Limits:
     max_tool_calls_per_turn: int = 20
     tool_retries: int = 1
     max_llm_calls: int = 120
-    max_tokens: int = 1_000_000
+    max_tokens: int = 2_500_000
     case_timeout_s: float = 900.0
     max_claims_per_side: int = 8
     max_tool_result_chars: int = 5000
@@ -80,6 +80,10 @@ TOOL_SPECS: dict[str, ToolSpec] = {
                  _obj({"table_id": _S}, ["table_id"])),
         ToolSpec("trade_stats", "Year-on-year volume/value change per month for a trade note, computed from its own rows (damaged rows excluded). Cite the returned row numbers.",
                  _obj({"table_id": _S}, ["table_id"])),
+        ToolSpec("import_summary", "NET exposure anchor: a country's TOTAL imports of a product from ALL origins, month by month vs the same months last year, "
+                 "with the loss on affected routes and the substitution on other routes broken out (whole period, since the break, last 3 months). "
+                 "Use it for the importing country's net exposure; cite the table IDs and row numbers it returns.",
+                 _obj({"country": _S, "product": _S}, ["country", "product"])),
         ToolSpec("get_reference", "Look up countries, ports/chokepoints, sectors, firms or outlets (with tiers).",
                  _obj({"kind": _S, "name": _S}, ["kind"])),
         ToolSpec("list_events", "List event IDs present in Runemark with a one-line description.", _obj({})),
@@ -97,16 +101,16 @@ TOOL_SPECS: dict[str, ToolSpec] = {
 # Each agent has its own tools. Odin never searches: he judges what is on the Case File.
 ALLOWED_TOOLS: dict[str, tuple[str, ...]] = {
     "HEIMDALL": ("search_documents", "read_document", "list_trade_tables", "read_trade_table",
-                 "get_reference", "list_events", "event_profile", "trade_stats"),
+                 "get_reference", "list_events", "event_profile", "trade_stats", "import_summary"),
     "THOR": ("search_documents", "read_document", "list_trade_tables", "read_trade_table",
-             "get_reference", "verify_citation", "compute_exposure", "trade_stats"),
+             "get_reference", "verify_citation", "compute_exposure", "trade_stats", "import_summary"),
     "LOKI": ("search_documents", "read_document", "list_trade_tables", "read_trade_table",
-             "get_reference", "verify_citation", "compute_exposure", "trade_stats"),
-    "ODIN": ("read_document", "read_trade_table", "verify_citation"),
+             "get_reference", "verify_citation", "compute_exposure", "trade_stats", "import_summary"),
+    "ODIN": ("read_document", "read_trade_table", "verify_citation", "trade_stats", "import_summary"),
 }
 
 ASOF_TOOLS = {"search_documents", "read_document", "list_trade_tables", "read_trade_table", "trade_stats",
-              "list_events", "event_profile", "verify_citation"}
+              "list_events", "event_profile", "verify_citation", "import_summary"}
 UNTRUSTED_TOOLS = {"search_documents", "read_document", "read_trade_table", "event_profile", "trade_stats"}
 
 _INJECTION = re.compile(

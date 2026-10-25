@@ -142,6 +142,6 @@ class Agent:
             if not v.get("valid"):
                 self.bus.emit("evidence_dropped", agent=self.name, run=run, doc_id=e.doc_id, reason=v.get("reason", "invalid"))
                 continue
-            e.date, e.tier = str(v.get("date", "")), v.get("tier")
+            e.date, e.tier = f"{v.get('date', '')} {v.get('time', '')}".strip(), v.get("tier")  # a timestamp, not just a day
             good.append(e)
         return good
