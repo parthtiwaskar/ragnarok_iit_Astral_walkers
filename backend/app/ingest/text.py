@@ -7,6 +7,7 @@ import unicodedata
 
 _SPACES = re.compile(r"[ \t  -​]+")
 _MANY_BLANK = re.compile(r"\n{3,}")
+PARA_MARK = re.compile(r"\[P\d+\]")  # paragraph anchors such as [P3]
 
 
 def normalize(text: str, keep_spacing: bool = False) -> str:
@@ -43,7 +44,7 @@ def non_ws_len(text: str) -> int:
 
 def norm_for_match(text: str) -> str:
     """Normalisation used for quote matching: lowercase, unify quotes/dashes, collapse whitespace."""
-    text = unicodedata.normalize("NFKC", text).lower()
+    text = PARA_MARK.sub(" ", unicodedata.normalize("NFKC", text)).lower()
     text = (
         text.replace("’", "'")
         .replace("‘", "'")

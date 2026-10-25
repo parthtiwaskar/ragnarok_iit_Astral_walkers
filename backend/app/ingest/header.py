@@ -8,12 +8,13 @@ from datetime import date
 
 KV = re.compile(r"^\s*([A-Za-z][A-Za-z_ /\-]{1,29})\s*[:=|]\s*(.+?)\s*$")
 DATE_STRICT = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+SEPARATOR = re.compile(r"^\s*(?:-{3,}|={3,}|\*{3,})\s*$")
 
 ALIASES: dict[str, str] = {}
 for canonical, names in {
     "doc_id": ["id", "doc id", "document id", "doc_id", "permanent id", "doc-id", "docid"],
     "title": ["title", "headline"],
-    "outlet": ["outlet", "source", "publisher", "outlet name"],
+    "outlet": ["outlet", "source", "publisher", "outlet name", "source name", "source_name"],
     "pub_date": ["pub date", "published", "publication date", "date", "pub_date", "publication_date"],
     "source_type": ["source type", "type", "doc type", "source_type", "document type", "doc_type"],
     "event_id": ["event", "event id", "event_id", "event-id"],
@@ -63,6 +64,9 @@ def parse_header(text: str, max_lines: int = 40, min_keys: int = 3) -> Header:
     end = i
     while i < len(lines) and i - start < max_lines:
         line = lines[i]
+        if SEPARATOR.match(line) and matched >= min_keys:
+            end = i + 1  # an explicit end-of-header rule (e.g. "---") is consumed
+            break
         if not line.strip():
             if matched >= min_keys:
                 end = i
