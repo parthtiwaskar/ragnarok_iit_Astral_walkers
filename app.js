@@ -1006,7 +1006,9 @@ document.addEventListener("click", (event) => {
 document.addEventListener("submit", (event) => {
   if (event.target.id === "token-form") {
     event.preventDefault();
-    try { sessionStorage.setItem(TOKEN_KEY, document.querySelector("#token-input").value.trim()); } catch { /* storage may be unavailable */ }
+    // phones add stray spaces and quotes when a token is pasted from a chat message
+    const typed = document.querySelector("#token-input").value.trim().replace(/^["'`]+|["'`]+$/g, "");
+    try { sessionStorage.setItem(TOKEN_KEY, typed); } catch { /* storage may be unavailable */ }
     window.location.reload();
     return;
   }
