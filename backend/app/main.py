@@ -202,7 +202,7 @@ def ingest_events(request: Request, since: int = 0) -> StreamingResponse:
 @app.post("/api/cases", status_code=202)
 async def create_case(request: Request, body: OpenCase) -> dict[str, Any]:
     services: Services = request.app.state.services
-    if services.repo.counts().get("docs_usable", 0) == 0:
+    if services.repo.counts().get("docs", 0) == 0:
         raise _error(409, "INDEX_NOT_READY", "Ingest the Runemark corpus before opening a case")
     context = open_case(services, body.question, body.as_of)
     current = RuntimeCase(case_id=context.case_id, question=body.question, as_of=body.as_of, context=context)
