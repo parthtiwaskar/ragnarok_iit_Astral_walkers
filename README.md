@@ -85,6 +85,12 @@ python cli.py export <case_id> --zip
 python cli.py memory-reset --agent all
 ```
 
+## Dataset
+
+The E5 challenge corpus is included at [`data/runemark/`](data/runemark/). It contains the original 76 PDF, TXT and DOCX documents, `manifest.json`, `hashes.sha256`, and the pack's README and sample question. Verify the source files from that directory with `sha256sum -c hashes.sha256`.
+
+The pack's `runemark_map.png` is a human-reference image only; do not pass it to agents or the retrieval pipeline.
+
 ---
 
 ## Example output (briefing excerpt)
