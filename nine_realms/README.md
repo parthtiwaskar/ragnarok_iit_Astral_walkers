@@ -41,6 +41,10 @@ conceded to weaker evidence without a warning, and a side can REVISE (narrow) a 
 deterministic scorecard (specific / evidence-backed attacks, defended / revised / conceded, concession rate). A collapsed debate
 (>=70% of attacked claims conceded) is flagged to Odin and sends the case back.
 
+## Deployment
+See `deploy/README.md`: Dockerfile, docker-compose, the full list of environment variables (`deploy/.env.example`), TLS and platform notes.
+`APP_ACCESS_TOKEN` protects the API; the server refuses to listen on a public address without it.
+
 Layout: `models.py` Case File · `tools.py` tool catalogue, allowlists, limits, guard chain · `agents/` the four agents and
 prompts · `thing.py` orchestrator · `briefing.py` digest + renderer · `memory.py` per-agent private memory ·
 `corpus.py` ingestion into SQLite + tools · `store.py` cases/claims/rulings/events tables · `server.py` API + dashboard · `embed.py` embedders for semantic search · `env.py` .env loader · `llm.py` Anthropic / OpenAI-compatible clients + `FakeLLM`.

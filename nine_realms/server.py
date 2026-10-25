@@ -1,35 +1,43 @@
-"""Local API + dashboard server (standard library only).
+"""API + dashboard server (standard library only).
 
-    python -m nine_realms.server --port 8765
+    python -m nine_realms.server                      # local: http://127.0.0.1:8765
+    HOST=0.0.0.0 APP_ACCESS_TOKEN=... python -m nine_realms.server   # deployment (see deploy/README.md)
 
-Serves index.html / app.js / styles.css and a JSON API backed by one SQLite file:
-  GET  /api/health                      status, provider, whether a trial is running
+Serves index.html / app.js / charts.js / styles.css and a JSON API backed by one SQLite file:
+  GET  /api/health                      liveness + whether a token is required (public)
   GET  /api/summary                     counts for the overview page
-  GET  /api/documents?text=&country=&sector=&source_type=&tier=&limit=   corpus explorer (full-text search + filters)
+  GET  /api/documents?text=&country=&sector=&source_type=&tier=&date_from=&date_to=&limit=   corpus explorer
   GET  /api/documents/<DOC_ID>          one document with paragraphs and parsed trade rows
   GET  /api/trade                       monthly trade rows per trade note (for the charts)
-  GET  /api/feed                        news items in publication order (for the live-feed replay)
+  GET  /api/feed                        news items in publication order
   GET  /api/cases                       saved cases
   GET  /api/cases/<id>                  full case (claims, evidence, attacks, responses, rulings, ranges, briefing)
   GET  /api/cases/<id>/events?since=N   event log, for live progress
   GET  /api/cases/<id>/briefing.md      the briefing as Markdown
   POST /api/cases {question, as_of?, options?}  start a trial in the background (one at a time) -> 202 {case_id}
-                                         options: min_runs, max_runs, max_claims_per_side, max_steps_per_turn
 
-Security: binds to 127.0.0.1; POST rejects cross-origin requests; API keys are read from the server's environment
-and never sent to or accepted from the browser.
+Deployment safety:
+  * APP_ACCESS_TOKEN protects every /api route except /api/health (Authorization: Bearer <token>)
+  * the server refuses to listen on a non-loopback address without a token (override: ALLOW_INSECURE_PUBLIC=1)
+  * trials cost money: MAX_TRIALS_PER_DAY and TRIAL_COOLDOWN_SECONDS cap them; one runs at a time
+  * POST rejects cross-origin requests (same host, localhost, or ALLOWED_ORIGINS only)
+  * API keys are read from the server's environment and never sent to or accepted from the browser
+  * production mode (NINE_REALMS_ENV=production) hides internal error details from clients
 """
 from __future__ import annotations
 
 import argparse
+import hmac
 import json
 import mimetypes
 import os
 import re
+import signal
 import sys
 import threading
 import time
 import uuid
+from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -38,15 +46,80 @@ from urllib.parse import parse_qs, urlparse
 from .corpus import LocalCorpus
 from .env import load_env
 from .events import EventBus
+from .models import CaseFile
 from .store import Store
 from .thing import Thing
 from .tools import Limits
 
+__version__ = "1.0.0"
 ROOT = Path(__file__).resolve().parent.parent
 STATIC = {"/": "index.html", "/index.html": "index.html", "/app.js": "app.js", "/charts.js": "charts.js", "/styles.css": "styles.css"}
 DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 # Per-case limit overrides a client may ask for (e.g. a small trial). Anything else is ignored.
 OPTION_RANGES = {"min_runs": (1, 3), "max_runs": (1, 3), "max_claims_per_side": (1, 8), "max_steps_per_turn": (4, 12)}
+LOOPBACK = {"127.0.0.1", "localhost", "::1"}
+CSP = ("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+       "font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
+
+
+def _int(name: str, default: int) -> int:
+    try:
+        return int(os.environ.get(name, default))
+    except ValueError:
+        return default
+
+
+def default_pack() -> str:
+    """The Runemark pack: RUNEMARK_PACK, else data/runemark (team repo layout), else the numbered dev-pack folder."""
+    for cand in (os.environ.get("RUNEMARK_PACK", ""), ROOT / "data" / "runemark", ROOT / "03_Ragnarok Trial of the Nine Realms" / "dev_pack_E5"):
+        if cand and (Path(cand) / "manifest.json").exists():
+            return str(cand)
+    return str(ROOT / "data" / "runemark")
+
+
+@dataclass
+class Config:
+    host: str = "127.0.0.1"
+    port: int = 8765
+    db: str = str(ROOT / "data" / "ragnarisk.sqlite")
+    pack: str = ""
+    memory_dir: str = str(ROOT / "data" / "memory")
+    import_runs: str = str(ROOT / "runs")
+    token: str = ""
+    production: bool = False
+    allowed_origins: set[str] = field(default_factory=set)
+    trust_proxy: bool = False
+    max_trials_per_day: int = 20
+    cooldown_s: int = 30
+    max_llm_calls: int = 150
+    max_case_tokens: int = 1_000_000
+    log_requests: bool = False
+
+    @classmethod
+    def from_env(cls) -> "Config":
+        data = os.environ.get("DATA_DIR", "")
+        return cls(
+            host=os.environ.get("HOST", "127.0.0.1"), port=_int("PORT", 8765),
+            db=os.environ.get("NINE_REALMS_DB") or (str(Path(data) / "ragnarisk.sqlite") if data else str(ROOT / "data" / "ragnarisk.sqlite")),
+            pack=default_pack(),
+            memory_dir=os.environ.get("NINE_REALMS_MEMORY_DIR") or (str(Path(data) / "memory") if data else str(ROOT / "data" / "memory")),
+            import_runs=os.environ.get("IMPORT_RUNS_DIR", str(ROOT / "runs")),
+            token=os.environ.get("APP_ACCESS_TOKEN", ""),
+            production=os.environ.get("NINE_REALMS_ENV", "").lower() == "production",
+            allowed_origins={o.strip().rstrip("/") for o in os.environ.get("ALLOWED_ORIGINS", "").split(",") if o.strip()},
+            trust_proxy=os.environ.get("TRUST_PROXY", "") == "1",
+            max_trials_per_day=_int("MAX_TRIALS_PER_DAY", 20), cooldown_s=_int("TRIAL_COOLDOWN_SECONDS", 30),
+            max_llm_calls=_int("MAX_LLM_CALLS", 150), max_case_tokens=_int("MAX_CASE_TOKENS", 1_000_000),
+            log_requests=os.environ.get("LOG_LEVEL", "info").lower() in ("info", "debug"),
+        )
+
+
+def check_bind(host: str, token: str) -> None:
+    """Never expose a server that can spend API money on a public interface without a token."""
+    if host not in LOOPBACK and not token and os.environ.get("ALLOW_INSECURE_PUBLIC") != "1":
+        raise SystemExit(f"Refusing to listen on {host} without APP_ACCESS_TOKEN: anyone could start trials on your API key. "
+                         "Set APP_ACCESS_TOKEN (generate one: python -c \"import secrets;print(secrets.token_urlsafe(32))\"), "
+                         "or ALLOW_INSECURE_PUBLIC=1 if the network is already protected.")
 
 
 def make_llm(provider: str):
@@ -67,85 +140,153 @@ def detect_provider() -> str:
 
 
 class App:
-    def __init__(self, corpus: LocalCorpus, store: Store, memory_dir: str, provider: str, port: int) -> None:
-        self.corpus, self.store, self.memory_dir, self.provider, self.port = corpus, store, memory_dir, provider, port
+    def __init__(self, corpus: LocalCorpus, store: Store, cfg: Config, provider: str) -> None:
+        self.corpus, self.store, self.cfg, self.provider = corpus, store, cfg, provider
         self.running: str | None = None
         self._lock = threading.Lock()
+        self._last_start: dict[str, float] = {}  # client -> time of its last trial, for the cooldown
 
-    def start_case(self, question: str, as_of: str, options: dict[str, int] | None = None) -> str:
+    def allow_trial(self, client: str) -> tuple[bool, str, int]:
+        """(ok, reason, retry_after_seconds). Trials spend real money, so they are rationed."""
+        now = time.time()
+        today = now - (now % 86400)
+        if self.store.count_started_since(today) >= self.cfg.max_trials_per_day:
+            return False, f"Daily trial limit reached ({self.cfg.max_trials_per_day}). Try again tomorrow.", int(today + 86400 - now)
+        wait = self._last_start.get(client, 0) + self.cfg.cooldown_s - now
+        if wait > 0:
+            return False, f"Please wait {int(wait) + 1}s before starting another trial.", int(wait) + 1
+        return True, "", 0
+
+    def start_case(self, question: str, as_of: str, options: dict[str, int] | None = None, client: str = "-") -> str:
         with self._lock:
             if self.running:
                 raise RuntimeError(f"busy:{self.running}")
             case_id = f"CASE-{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:4]}"
             self.running = case_id
+            self._last_start[client] = time.time()
+        self.store.save_case(CaseFile(case_id, question, as_of).to_dict(), self.provider)  # visible (and counted) immediately
         threading.Thread(target=self._run, args=(case_id, question, as_of, options or {}), daemon=True).start()
         return case_id
 
     def _run(self, case_id: str, question: str, as_of: str, options: dict[str, int]) -> None:
         try:
             bus = EventBus(sink=lambda ev: self.store.add_event(case_id, ev))
-            base = {"max_llm_calls": 150} if self.provider == "anthropic" else {"max_llm_calls": 150, "max_tool_result_chars": 3500, "max_context_chars": 13000}
-            lim = Limits(**base, **options)
-            thing = Thing(make_llm(self.provider), self.corpus, limits=lim, bus=bus, memory_dir=self.memory_dir,
+            base: dict[str, Any] = {"max_llm_calls": self.cfg.max_llm_calls, "max_tokens": self.cfg.max_case_tokens}
+            if self.provider != "anthropic":
+                base |= {"max_tool_result_chars": 3500, "max_context_chars": 13000}  # fit small per-minute token budgets
+            thing = Thing(make_llm(self.provider), self.corpus, limits=Limits(**base, **options), bus=bus, memory_dir=self.cfg.memory_dir,
                           on_update=lambda c: self.store.save_case(c.to_dict(), self.provider))
             thing.run_case(question, as_of, case_id=case_id)
         except Exception as exc:  # never leave a case hanging as OPEN
             case = self.store.load_case(case_id)
             if case and case["status"] == "OPEN":
-                case["status"], case["status_reasons"] = "ABORTED", [f"server error: {type(exc).__name__}: {exc}"]
+                case["status"], case["status_reasons"] = "ABORTED", [f"server error: {type(exc).__name__}"]
                 self.store.save_case(case, self.provider)
+            print(f"[trial {case_id}] failed: {type(exc).__name__}: {exc}", file=sys.stderr)
         finally:
             with self._lock:
                 self.running = None
 
 
 def make_handler(app: App):
-    class Handler(BaseHTTPRequestHandler):
-        server_version = "Ragnarisk/1.0"
+    cfg = app.cfg
 
-        def log_message(self, *a: Any) -> None:  # quiet
+    class Handler(BaseHTTPRequestHandler):
+        server_version = "Ragnarisk/" + __version__
+        sys_version = ""
+
+        def log_message(self, *a: Any) -> None:  # replaced by _log, which never prints query strings
             pass
 
-        def _send(self, code: int, body: bytes, ctype: str = "application/json") -> None:
+        # -- plumbing ---------------------------------------------------------------
+        def _client(self) -> str:
+            if cfg.trust_proxy and self.headers.get("X-Forwarded-For"):
+                return self.headers["X-Forwarded-For"].split(",")[0].strip()
+            return self.client_address[0]
+
+        def _send(self, code: int, body: bytes, ctype: str = "application/json", extra: dict[str, str] | None = None) -> None:
+            self._status = code
             self.send_response(code)
             self.send_header("Content-Type", ctype + ("; charset=utf-8" if ctype.startswith("text/") or ctype == "application/json" else ""))
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store")
-            self.send_header("X-Content-Type-Options", "nosniff")
+            for k, v in {"X-Content-Type-Options": "nosniff", "X-Frame-Options": "DENY", "Referrer-Policy": "no-referrer",
+                         "Content-Security-Policy": CSP, "Cross-Origin-Resource-Policy": "same-origin", **(extra or {})}.items():
+                self.send_header(k, v)
+            if cfg.production and self.headers.get("X-Forwarded-Proto") == "https":
+                self.send_header("Strict-Transport-Security", "max-age=31536000")
             self.end_headers()
-            self.wfile.write(body)
+            if not getattr(self, "_head", False):  # HEAD gets the headers only
+                self.wfile.write(body)
 
-        def _json(self, code: int, obj: Any) -> None:
-            self._send(code, json.dumps(obj, default=str).encode())
+        def _json(self, code: int, obj: Any, extra: dict[str, str] | None = None) -> None:
+            self._send(code, json.dumps(obj, default=str).encode(), extra=extra)
+
+        def _fail(self, exc: Exception) -> None:
+            print(f"[server] {type(exc).__name__}: {exc}", file=sys.stderr)
+            self._json(500, {"error": "internal error" if cfg.production else f"{type(exc).__name__}: {exc}"})
+
+        def _log(self, started: float) -> None:
+            if cfg.log_requests:
+                print(f"{time.strftime('%H:%M:%S')} {self._client()} {self.command} {urlparse(self.path).path} {getattr(self, '_status', '-')} "
+                      f"{(time.time() - started) * 1000:.0f}ms", flush=True)
+
+        def _authorized(self) -> bool:
+            if not cfg.token:
+                return True
+            got = self.headers.get("Authorization", "")
+            return got.startswith("Bearer ") and hmac.compare_digest(got[7:].encode(), cfg.token.encode())
+
+        def _origin_ok(self) -> bool:
+            origin = self.headers.get("Origin")
+            if not origin:
+                return True
+            origin = origin.rstrip("/")
+            host = self.headers.get("Host", "")
+            same_host = urlparse(origin).netloc == host
+            return same_host or origin in cfg.allowed_origins or origin in (f"http://127.0.0.1:{cfg.port}", f"http://localhost:{cfg.port}")
+
+        # -- routes -----------------------------------------------------------------
+        def do_HEAD(self) -> None:  # load balancers and uptime checkers often probe with HEAD
+            self._head = True
+            self.do_GET()
 
         def do_GET(self) -> None:
-            url = urlparse(self.path)
-            q = {k: v[0] for k, v in parse_qs(url.query).items()}
-            path = url.path.rstrip("/") or "/"
+            started = time.time()
             try:
+                url = urlparse(self.path)
+                q = {k: v[0] for k, v in parse_qs(url.query).items()}
+                path = url.path.rstrip("/") or "/"
                 if path in STATIC:
                     f = ROOT / STATIC[path]
-                    return self._send(200, f.read_bytes(), mimetypes.guess_type(f.name)[0] or "text/plain")
-                if not path.startswith("/api/"):
-                    return self._json(404, {"error": "not found"})
-                return self._api_get(path, q)
+                    self._send(200, f.read_bytes(), mimetypes.guess_type(f.name)[0] or "text/plain")
+                elif path == "/api/health":
+                    body: dict[str, Any] = {"ok": True, "version": __version__, "auth_required": bool(cfg.token)}
+                    if self._authorized():
+                        body |= {"provider": app.provider or None, "running": app.running, "as_of_default": app.corpus.pack_as_of}
+                    self._json(200, body)
+                elif not path.startswith("/api/"):
+                    self._json(404, {"error": "not found"})
+                elif not self._authorized():
+                    self._json(401, {"error": "access token required"}, {"WWW-Authenticate": "Bearer"})
+                else:
+                    self._api_get(path, q)
             except Exception as exc:
-                self._json(500, {"error": f"{type(exc).__name__}: {exc}"})
+                self._fail(exc)
+            finally:
+                self._log(started)
 
         def _api_get(self, path: str, q: dict[str, str]) -> None:
             parts = path.split("/")[2:]
             c, s = app.corpus, app.store
-            if parts == ["health"]:
-                return self._json(200, {"ok": True, "provider": app.provider or None, "running": app.running, "as_of_default": c.pack_as_of})
             if parts == ["summary"]:
-                cases = s.list_cases()
-                return self._json(200, {"corpus": c.stats(), "store": s.counts(), "cases": cases[:5], "as_of": c.pack_as_of,
+                return self._json(200, {"corpus": c.stats(), "store": s.counts(), "cases": s.list_cases()[:5], "as_of": c.pack_as_of,
                                         "running": app.running, "can_run": bool(app.provider)})
             if parts == ["documents"]:
                 tier = int(q["tier"]) if q.get("tier", "").isdigit() else None
                 return self._json(200, c.list_documents(q.get("country", ""), q.get("sector", ""), q.get("source_type", ""), tier,
                                                         q.get("prefix", ""), q.get("text", ""), q.get("as_of", ""),
-                                                        int(q.get("limit", 200)), int(q.get("offset", 0)),
+                                                        min(int(q.get("limit", 200)), 500), int(q.get("offset", 0)),
                                                         q.get("date_from", ""), q.get("date_to", ""), q.get("exclude_type", "")))
             if len(parts) == 2 and parts[0] == "documents":
                 d = c.get_document(parts[1])
@@ -153,7 +294,7 @@ def make_handler(app: App):
             if parts == ["trade"]:
                 return self._json(200, {"tables": c.trade_series(q.get("as_of", "")), "as_of": q.get("as_of") or c.pack_as_of})
             if parts == ["feed"]:
-                return self._json(200, {"items": c.feed(q.get("as_of", ""), int(q.get("limit", 60)))})
+                return self._json(200, {"items": c.feed(q.get("as_of", ""), min(int(q.get("limit", 60)), 200))})
             if parts == ["cases"]:
                 return self._json(200, {"cases": s.list_cases(), "running": app.running})
             if len(parts) >= 2 and parts[0] == "cases":
@@ -163,7 +304,7 @@ def make_handler(app: App):
                 if len(parts) == 2:
                     return self._json(200, {**case, "is_running": app.running == parts[1]})
                 if parts[2] == "events":
-                    return self._json(200, {"events": s.events(parts[1], int(q.get("since", -1)), int(q.get("limit", 500)),
+                    return self._json(200, {"events": s.events(parts[1], int(q.get("since", -1)), min(int(q.get("limit", 500)), 2000),
                                                                q["types"].split(",") if q.get("types") else None),
                                             "is_running": app.running == parts[1], "status": case["status"]})
                 if parts[2] == "briefing.md":
@@ -171,13 +312,15 @@ def make_handler(app: App):
             self._json(404, {"error": "not found"})
 
         def do_POST(self) -> None:
-            path = urlparse(self.path).path.rstrip("/")
-            origin = self.headers.get("Origin")
-            if origin and origin not in (f"http://127.0.0.1:{app.port}", f"http://localhost:{app.port}"):
-                return self._json(403, {"error": "cross-origin request refused"})
-            if path != "/api/cases":
-                return self._json(404, {"error": "not found"})
+            started = time.time()
             try:
+                path = urlparse(self.path).path.rstrip("/")
+                if not self._origin_ok():
+                    return self._json(403, {"error": "cross-origin request refused"})
+                if not self._authorized():
+                    return self._json(401, {"error": "access token required"}, {"WWW-Authenticate": "Bearer"})
+                if path != "/api/cases":
+                    return self._json(404, {"error": "not found"})
                 body = json.loads(self.rfile.read(min(int(self.headers.get("Content-Length", 0)), 20_000)) or b"{}")
                 question = str(body.get("question", "")).strip()
                 as_of = str(body.get("as_of") or app.corpus.pack_as_of)
@@ -187,55 +330,73 @@ def make_handler(app: App):
                     return self._json(400, {"error": "as_of must be YYYY-MM-DD"})
                 if not app.provider:
                     return self._json(503, {"error": "No LLM key is configured on the server. Set ANTHROPIC_API_KEY (or GROQ_API_KEY) and restart."})
+                ok, why, retry = app.allow_trial(self._client())
+                if not ok:
+                    return self._json(429, {"error": why}, {"Retry-After": str(retry)})
                 opts = {k: int(v) for k, v in (body.get("options") or {}).items()
                         if k in OPTION_RANGES and isinstance(v, int) and OPTION_RANGES[k][0] <= v <= OPTION_RANGES[k][1]}
-                return self._json(202, {"case_id": app.start_case(question, as_of, opts), "options": opts})
+                self._json(202, {"case_id": app.start_case(question, as_of, opts, self._client()), "options": opts})
             except RuntimeError as exc:
                 if str(exc).startswith("busy:"):
-                    return self._json(409, {"error": "A trial is already running.", "case_id": str(exc)[5:]})
-                raise
+                    self._json(409, {"error": "A trial is already running.", "case_id": str(exc)[5:]})
+                else:
+                    self._fail(exc)
             except json.JSONDecodeError:
-                return self._json(400, {"error": "invalid JSON"})
+                self._json(400, {"error": "invalid JSON"})
             except Exception as exc:
-                return self._json(500, {"error": f"{type(exc).__name__}: {exc}"})
+                self._fail(exc)
+            finally:
+                self._log(started)
 
     return Handler
 
 
-def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--port", type=int, default=8765)
-    ap.add_argument("--host", default="127.0.0.1")
-    ap.add_argument("--db", default=str(ROOT / "data" / "ragnarisk.sqlite"))
-    ap.add_argument("--pack", default=str(ROOT / "03_Ragnarok Trial of the Nine Realms" / "dev_pack_E5"))
-    ap.add_argument("--memory-dir", default=str(ROOT / "data" / "memory"))
-    ap.add_argument("--import-runs", default=str(ROOT / "runs"), help="import saved runs/<case>/case.json on first start")
-    args = ap.parse_args(argv)
-
-    loaded = load_env()
-    if loaded:
-        print(f"loaded from .env: {', '.join(loaded)}")
-    corpus = LocalCorpus(args.pack, args.db)
-    store = Store(args.db)
+def build_app(cfg: Config) -> App:
+    corpus = LocalCorpus(cfg.pack, cfg.db)
+    store = Store(cfg.db)
     stale = store.abort_stale()
     if stale:
         print(f"marked {stale} unfinished case(s) from a previous run as ABORTED")
-    runs = Path(args.import_runs)
+    runs = Path(cfg.import_runs)
     if runs.exists() and not store.list_cases():
         for d in sorted(runs.glob("*")):
             cid = store.import_run_dir(d)
             if cid:
                 print(f"imported {cid}")
-    provider = detect_provider()
-    app = App(corpus, store, args.memory_dir, provider, args.port)
-    print(f"corpus: {corpus.stats()}\nstore:  {store.counts()}")
-    print(f"live trials: {'enabled via ' + provider if provider else 'DISABLED (no ANTHROPIC_API_KEY / GROQ_API_KEY in the environment)'}")
-    httpd = ThreadingHTTPServer((args.host, args.port), make_handler(app))
-    print(f"serving http://{args.host}:{args.port}")
+    return App(corpus, store, cfg, detect_provider())
+
+
+def main(argv: list[str] | None = None) -> int:
+    loaded = load_env()
+    base = Config.from_env()
+    ap = argparse.ArgumentParser(description="Ragnarisk API + dashboard server")
+    ap.add_argument("--host", default=base.host)
+    ap.add_argument("--port", type=int, default=base.port)
+    ap.add_argument("--db", default=base.db)
+    ap.add_argument("--pack", default=base.pack)
+    ap.add_argument("--memory-dir", default=base.memory_dir)
+    ap.add_argument("--import-runs", default=base.import_runs, help="import saved runs/<case>/case.json on first start")
+    args = ap.parse_args(argv)
+    cfg = base
+    cfg.host, cfg.port, cfg.db, cfg.pack, cfg.memory_dir, cfg.import_runs = args.host, args.port, args.db, args.pack, args.memory_dir, args.import_runs
+
+    check_bind(cfg.host, cfg.token)
+    if loaded:
+        print(f"loaded from .env: {', '.join(loaded)}")
+    app = build_app(cfg)
+    print(f"corpus: {app.corpus.stats()}\nstore:  {app.store.counts()}")
+    print(f"live trials: {'enabled via ' + app.provider if app.provider else 'DISABLED (no ANTHROPIC_API_KEY / GROQ_API_KEY in the environment)'}")
+    print(f"auth: {'access token required' if cfg.token else 'OFF (loopback only)'} · limits: {cfg.max_trials_per_day} trials/day, "
+          f"{cfg.cooldown_s}s cooldown · mode: {'production' if cfg.production else 'development'}")
+    httpd = ThreadingHTTPServer((cfg.host, cfg.port), make_handler(app))
+    signal.signal(signal.SIGTERM, lambda *_: threading.Thread(target=httpd.shutdown, daemon=True).start())  # graceful stop in containers
+    print(f"serving http://{cfg.host}:{cfg.port}", flush=True)
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
         pass
+    finally:
+        httpd.server_close()
     return 0
 
 

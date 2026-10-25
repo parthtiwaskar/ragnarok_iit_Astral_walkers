@@ -204,6 +204,16 @@
           <footer class="page-footer"><span>RAGNARISK INTELLIGENCE SYSTEMS</span><span>Evidence first. Judgment earned.</span><span>RUNEMARK · E5</span></footer>
         </div>
       </main>
+      <div class="modal-backdrop" id="token-backdrop" hidden>
+        <form class="dialog panel" id="token-form" aria-labelledby="token-title">
+          <h2 id="token-title">Access token</h2>
+          <p>This server is protected. Enter the access token you were given. It is kept for this browser tab only.</p>
+          <label for="token-input">Token</label>
+          <input id="token-input" type="password" autocomplete="current-password" required />
+          <p class="token-error" id="token-error" hidden></p>
+          <button class="button button-primary dialog-submit" type="submit">Continue <span>→</span></button>
+        </form>
+      </div>
       <aside class="sheet" id="doc-sheet" hidden aria-label="Source document"><div class="sheet-head"><strong id="sheet-title">Source</strong><button class="sheet-close" data-action="close-sheet" aria-label="Close source">✕</button></div><div class="sheet-body" id="sheet-body"></div></aside>
       <div class="toast" id="toast" role="status" aria-live="polite"></div>
       <div class="modal-backdrop" id="modal-backdrop" hidden>
