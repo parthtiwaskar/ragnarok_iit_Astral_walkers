@@ -141,16 +141,64 @@ def make_llm(provider: str):
 
     if provider == "anthropic":
         return AnthropicClient(model=os.environ.get("ANTHROPIC_MODEL"), max_tokens=8192)
+    if provider == "deepseek":  # OpenAI-compatible chat completions
+        return OpenAICompatClient(os.environ["DEEPSEEK_API_KEY"], os.environ.get("DEEPSEEK_MODEL", "deepseek-chat"),
+                                  base_url=os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1"),
+                                  max_tokens=4096)
+    if provider == "openai":  # OpenAI itself, or any OpenAI-compatible gateway (e.g. OpenRouter) via OPENAI_BASE_URL
+        return OpenAICompatClient(os.environ["OPENAI_API_KEY"], openai_model(), base_url=openai_base_url(), max_tokens=4096)
     return OpenAICompatClient(os.environ["GROQ_API_KEY"], os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b"), max_tokens=2500)
 
 
+def openai_base_url() -> str:
+    return os.environ.get("OPENAI_BASE_URL") or "https://api.openai.com/v1"
+
+
+def openai_model() -> str:
+    """NINE_REALMS_OPENAI_MODEL (LLM_MODEL belongs to backend/). Gateways like OpenRouter want vendor/model ids."""
+    default = "openai/gpt-4.1-mini" if "openrouter.ai" in openai_base_url() else "gpt-4.1-mini"
+    return os.environ.get("NINE_REALMS_OPENAI_MODEL") or default
+
+
+# Auto-detection order when NINE_REALMS_PROVIDER is empty: the first provider whose key is set wins.
+PROVIDER_KEYS = {"deepseek": "DEEPSEEK_API_KEY", "anthropic": "ANTHROPIC_API_KEY", "openai": "OPENAI_API_KEY", "groq": "GROQ_API_KEY"}
+# Providers with large context windows keep full tool results; the rest get trimmed ones (see App._run).
+LARGE_CONTEXT = {"anthropic", "deepseek", "openai"}
+
+
+def choose_provider() -> tuple[str, str]:
+    """(provider or "", a one-line reason). NINE_REALMS_PROVIDER forces one; otherwise the first key set wins.
+
+    The reason names every key that is set, because a stale key earlier in the order silently wins
+    auto-detection: after swapping keys, either remove the old one or force the provider."""
+    present = [key for key in PROVIDER_KEYS.values() if os.environ.get(key)]
+    forced = os.environ.get("NINE_REALMS_PROVIDER", "").strip().lower()
+    if forced:
+        if forced not in PROVIDER_KEYS:
+            return "", f"NINE_REALMS_PROVIDER={forced} is not one of {', '.join(PROVIDER_KEYS)}"
+        if not os.environ.get(PROVIDER_KEYS[forced]):
+            return "", f"NINE_REALMS_PROVIDER={forced} but {PROVIDER_KEYS[forced]} is not set"
+        return forced, f"forced by NINE_REALMS_PROVIDER ({PROVIDER_KEYS[forced]} is set)"
+    for provider, key in PROVIDER_KEYS.items():
+        if os.environ.get(key):
+            others = [k for k in present if k != key]
+            also = f"; also set: {', '.join(others)} (set NINE_REALMS_PROVIDER to use one of those)" if others else ""
+            return provider, f"auto-detected from {key}{also}"
+    return "", f"no LLM key set ({' / '.join(PROVIDER_KEYS.values())})"
+
+
 def detect_provider() -> str:
-    forced = os.environ.get("NINE_REALMS_PROVIDER", "")
-    if forced in ("anthropic", "groq"):
-        return forced if os.environ.get("ANTHROPIC_API_KEY" if forced == "anthropic" else "GROQ_API_KEY") else ""
-    if os.environ.get("ANTHROPIC_API_KEY"):
-        return "anthropic"
-    return "groq" if os.environ.get("GROQ_API_KEY") else ""
+    return choose_provider()[0]
+
+
+def provider_model(provider: str) -> str:
+    """The model a provider will use, for logs and /api/health. Never includes a key."""
+    return {
+        "deepseek": os.environ.get("DEEPSEEK_MODEL", "deepseek-chat"),
+        "anthropic": os.environ.get("ANTHROPIC_MODEL") or "claude-sonnet-5-5",
+        "openai": openai_model() if provider == "openai" else "",
+        "groq": os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b"),
+    }.get(provider, "")
 
 
 class App:
@@ -203,7 +251,7 @@ class App:
         try:
             bus = EventBus(sink=lambda ev: self.store.add_event(case_id, ev))
             base: dict[str, Any] = {"max_llm_calls": self.cfg.max_llm_calls, "max_tokens": self.cfg.max_case_tokens}
-            if self.provider != "anthropic":
+            if self.provider not in LARGE_CONTEXT:
                 base |= {"max_tool_result_chars": 3500, "max_context_chars": 13000}  # fit small per-minute token budgets
             thing = Thing(make_llm(self.provider), self.corpus, limits=Limits(**base, **options), bus=bus, memory_dir=self.cfg.memory_dir,
                           on_update=lambda c: self.store.save_case(c.to_dict(), self.provider))
@@ -294,7 +342,8 @@ def make_handler(app: App):
                 elif path == "/api/health":
                     body: dict[str, Any] = {"ok": True, "version": __version__, "auth_required": bool(cfg.token)}
                     if self._authorized():
-                        body |= {"provider": app.provider or None, "running": app.running, "running_ids": app.running_ids,
+                        body |= {"provider": app.provider or None, "model": provider_model(app.provider) or None,
+                                 "running": app.running, "running_ids": app.running_ids,
                                  "as_of_default": app.corpus.pack_as_of, "max_concurrent": cfg.max_concurrent}
                     self._json(200, body)
                 elif not path.startswith("/api/"):
@@ -407,7 +456,7 @@ def make_handler(app: App):
                 if not DATE.match(as_of):
                     return self._json(400, {"error": "as_of must be YYYY-MM-DD"})
                 if not app.provider:
-                    return self._json(503, {"error": "No LLM key is configured on the server. Set ANTHROPIC_API_KEY (or GROQ_API_KEY) and restart."})
+                    return self._json(503, {"error": "No LLM key is configured on the server. Set DEEPSEEK_API_KEY, ANTHROPIC_API_KEY, OPENAI_API_KEY or GROQ_API_KEY and restart."})
                 ok, why, retry = app.allow_trial(self._client())
                 if not ok:
                     return self._json(429, {"error": why}, {"Retry-After": str(retry)})
@@ -468,7 +517,11 @@ def main(argv: list[str] | None = None) -> int:
         print(f"loaded from .env: {', '.join(loaded)}")
     app = build_app(cfg)
     print(f"corpus: {app.corpus.stats()}\nstore:  {app.store.counts()}")
-    print(f"live trials: {'enabled via ' + app.provider if app.provider else 'DISABLED (no ANTHROPIC_API_KEY / GROQ_API_KEY in the environment)'}")
+    provider, why = choose_provider()
+    if provider:
+        print(f"live trials: enabled via {provider} (model {provider_model(provider)}) - {why}")
+    else:
+        print(f"live trials: DISABLED - {why}")
     print(f"auth: {'access token required' if cfg.token else 'OFF (loopback only)'} · limits: {cfg.max_trials_per_day} trials/day, "
           f"{cfg.cooldown_s}s cooldown · {cfg.max_concurrent} concurrent · mode: {'production' if cfg.production else 'development'}")
     httpd = ThreadingHTTPServer((cfg.host, cfg.port), make_handler(app))
