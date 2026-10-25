@@ -15,7 +15,7 @@ COLS = {
     "doc_id": ["doc_id", "id", "doc id", "document id", "document_id", "permanent_id"],
     "file": ["file", "path", "filename", "file_name", "file path", "location"],
     "title": ["title", "headline"],
-    "outlet": ["outlet", "source", "publisher"],
+    "outlet": ["outlet", "source", "publisher", "source_name", "source name"],
     "pub_date": ["pub_date", "date", "published", "publication date", "publication_date"],
     "tier": ["tier", "reliability", "reliability_tier"],
     "event_id": ["event_id", "event", "event id"],

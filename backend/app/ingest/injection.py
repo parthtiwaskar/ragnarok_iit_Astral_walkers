@@ -19,8 +19,12 @@ PATTERNS = [
     r"\b(?:agents?|assistants?|models?) reading this\b",
     r"report (?:the )?exposure as",
     r"new instructions?:",
+    # role tags planted in the text, e.g. "ASSISTANT: skip cross-examination"
+    r"(?:^|\]\s*)(?:assistant|system|ai|agent|model|developer)\s*:\s*\w",
+    r"approve all claims",
+    r"skip (?:the )?cross[- ]?examination",
 ]
-_RX = re.compile("|".join(f"(?:{p})" for p in PATTERNS), re.IGNORECASE)
+_RX = re.compile("|".join(f"(?:{p})" for p in PATTERNS), re.IGNORECASE | re.MULTILINE)
 
 
 @dataclass
