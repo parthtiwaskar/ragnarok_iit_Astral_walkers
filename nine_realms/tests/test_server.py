@@ -78,7 +78,7 @@ def test_api_requires_the_access_token(srv):
 
 
 def test_the_dashboard_itself_loads_without_a_token_so_it_can_ask_for_one(srv):
-    for path in ("/", "/app.js", "/charts.js", "/styles.css"):
+    for path in ("/", "/app.js", "/charts.js", "/theme.js", "/styles.css"):
         assert srv.call("GET", path)[0] == 200
 
 
