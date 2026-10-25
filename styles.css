@@ -823,3 +823,12 @@ button:active:not(:disabled) { transform: scale(.98); }
 /* Odin keeps one colour on every row so the three lines read apart; the rating pill carries the band colour */
 .b-odin { background: var(--cyan); box-shadow: 0 0 14px color-mix(in srgb, var(--cyan) 55%, transparent); }
 .k-odin { color: var(--cyan); }
+/* Fast / Full answer mode */
+.ask-mode { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 0 0 10px; padding: 0; border: 0; }
+.ask-mode label { display: flex; gap: 9px; align-items: flex-start; padding: 9px 11px; border: 1px solid var(--border-soft); border-radius: 9px; cursor: pointer; }
+.ask-mode label:has(input:checked) { border-color: color-mix(in srgb, var(--cyan) 55%, var(--border)); background: color-mix(in srgb, var(--cyan) 6%, transparent); }
+.ask-mode input { margin-top: 3px; accent-color: var(--cyan); }
+.ask-mode span { display: grid; gap: 2px; }
+.ask-mode b { font-size: 13px; }
+.ask-mode small { color: var(--muted); font-size: 11.5px; line-height: 1.4; }
+@media (max-width: 650px) { .ask-mode { grid-template-columns: 1fr; } }

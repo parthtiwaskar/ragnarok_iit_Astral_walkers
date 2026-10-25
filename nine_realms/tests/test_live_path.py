@@ -160,6 +160,46 @@ def test_a_trial_started_over_http_runs_to_completion_and_is_readable_back(live)
     assert code == 200 and case_id in json.dumps(listed)
 
 
+FAST_OPTIONS = {"min_runs": 1, "max_runs": 1, "max_claims_per_side": 3, "max_steps_per_turn": 5}  # what the Ask screen sends
+
+
+def test_fast_answer_runs_one_trial_and_makes_fewer_llm_calls(tmp_path, monkeypatch):
+    """The dashboard's Fast answer sends per-trial limits; it must end cleanly after one run, using fewer LLM calls."""
+    made: list[FakeLLM] = []
+
+    def fake_make_llm(provider: str) -> FakeLLM:
+        made.append(FakeLLM(make_policy()))
+        return made[-1]
+
+    monkeypatch.setattr(server, "make_llm", fake_make_llm)
+    app = App(StubCorpus(), Store(), Config(token="t0k", cooldown_s=0, memory_dir=str(tmp_path / "m")), "deepseek")
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(app))
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+
+    def call(method: str, path: str, body: dict | None = None):
+        c = http.client.HTTPConnection("127.0.0.1", httpd.server_address[1], timeout=10)
+        c.request(method, path, json.dumps(body) if body is not None else None,
+                  {"Content-Type": "application/json", "Authorization": "Bearer t0k"})
+        r = c.getresponse()
+        return r.status, json.loads(r.read())
+
+    try:
+        cases = {}
+        for mode, extra in (("full", {}), ("fast", {"options": FAST_OPTIONS})):
+            code, body = call("POST", "/api/cases", {"question": Q, "as_of": AS_OF, **extra})
+            assert code == 202 and body["options"] == extra.get("options", {})
+            cases[mode] = _wait_until_finished(app, call, body["case_id"])
+        full, fast = cases["full"], cases["fast"]
+        assert len(full["runs"]) == 2 and len(fast["runs"]) == 1
+        assert fast["status"] in ("COMPLETE", "INCOMPLETE")  # never a hung or aborted case
+        assert fast["rulings"] and fast["ranges"]  # still a judged answer with ranges
+        assert set(fast["rulings"]) == set(fast["claims"])  # Odin still rules on every claim
+        assert made[1].calls < made[0].calls, (made[1].calls, made[0].calls)  # less work, so a faster answer
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
 def test_a_second_trial_is_refused_while_one_is_running(live):
     app, call, _ = live
     app.cfg.cooldown_s = 0  # otherwise the per-client cooldown answers 429 before the busy check can answer 409
