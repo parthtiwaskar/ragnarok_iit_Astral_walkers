@@ -1,0 +1,6 @@
+Sheet: chokepoints
+
+name | kind | routes
+Serpent Canal | canal | Asvald>Brenmark; Gravia>Brenmark; Asvald>Dalmora
+Ravenmouth Strait | strait | Corvenia>Eskerland; Hollin>Eskerland; Isvar>Fjordheim
+Ironway Rail Link | rail | Corvenia>Brenmark; Dalmora>Brenmark

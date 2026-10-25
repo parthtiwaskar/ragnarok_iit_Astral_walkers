@@ -1,0 +1,15 @@
+ID: RM-DOC-0102
+Title: Brenmark electronics importers scramble as canal shuts
+Source: Runewire
+Published: 2025-03-03
+Type: news_report
+Event: EVT-A
+Country: Brenmark
+Sector: electronics
+Tier: 2
+
+Electronics importers in Brenmark were scrambling on Monday after the Serpent Canal closed to commercial traffic.
+
+Roughly 70 percent of Brenmark's electronics imports transit the Serpent Canal, according to port data reviewed by Runewire.
+
+Brenmark Circuitworks said it had several weeks of components in its warehouses at Harrowgate, but smaller assemblers hold far less.

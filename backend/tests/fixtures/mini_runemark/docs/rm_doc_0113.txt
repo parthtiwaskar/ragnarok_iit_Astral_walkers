@@ -1,0 +1,13 @@
+Doc ID: RM-DOC-0113
+Title: Rail authority adds capacity on the Ironway
+Outlet: Freight & Ledger
+Publication Date: 2025-04-02
+Source Type: shipping_update
+Event ID: EVT-A
+Country: Brenmark; Corvenia; Dalmora
+Sector: electronics
+Reliability Tier: 2
+
+The Ironway Rail Link operator has added night services and now expects to carry about 30 percent of diverted electronics freight for Brenmark through the second quarter.
+
+Coastal feeders from Skarport add a little more, but forwarders say the combined alternatives will not exceed one third of the cargo that normally uses the canal.

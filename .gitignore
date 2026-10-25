@@ -1,0 +1,36 @@
+# secrets
+.env
+.env.*
+!.env.example
+
+# python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.hypothesis/
+
+# node / frontend
+node_modules/
+frontend/dist/
+
+# generated at runtime (index, private agent memory, case runs)
+data/index/
+data/live_packs/*
+!data/live_packs/.gitkeep
+memory/*.sqlite*
+runs/*
+!runs/.gitkeep
+backend/data/
+backend/memory/
+backend/runs/
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

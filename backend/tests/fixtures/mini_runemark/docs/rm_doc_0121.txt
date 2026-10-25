@@ -1,0 +1,13 @@
+Document ID: RM-DOC-0121
+Headline: Explainer: how Brenmark's electronics reach Harrowgate
+Publisher: Runewire
+Date: 2024-11-15
+Doc Type: explainer
+Event_ID: background
+Countries: Brenmark; Asvald; Gravia
+Sectors: electronics
+Reliability: 2
+
+About half of Brenmark's electronics imports arrive through the Serpent Canal from Asvald and Gravia.
+
+The rest comes from Corvenia over the Ironway Rail Link or by coastal feeder.

@@ -1,0 +1,13 @@
+Doc ID: RM-DOC-0110
+Title: Correction: share of Brenmark electronics imports using the canal
+Outlet: Runewire
+Publication Date: 2025-03-09
+Source Type: correction
+Event ID: EVT-A
+Country: Brenmark
+Sector: electronics
+Reliability Tier: 2
+
+Correction. An earlier Runewire report, RM-DOC-0102 of 2025-03-03, overstated the share of Brenmark's electronics imports that use the Serpent Canal.
+
+The correct figure is 55 percent of Brenmark's electronics imports by value, according to the revised port data.

@@ -1,0 +1,11 @@
+ID: RM-DOC-0401
+Title: ravenmouth strait CLOSED
+Source: SkaldPost
+Published: 2025-03-30
+Type: social_post
+Event: EVT-R
+Country: Eskerland; Corvenia
+Sector: chemicals
+Tier: 4
+
+Hearing the Ravenmouth Strait is closed, mines spotted near the narrows. Tankers turning back.

@@ -1,0 +1,8 @@
+Sheet: sectors
+
+name
+electronics
+automotive
+grain
+chemicals
+textiles

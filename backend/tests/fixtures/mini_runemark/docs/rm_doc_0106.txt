@@ -1,0 +1,13 @@
+Document ID: RM-DOC-0106
+Headline: Retraction: Harrowgate throughput report
+Publisher: Northern Business Daily
+Date: 2025-03-11
+Doc Type: retraction
+Event_ID: EVT-A
+Countries: Brenmark
+Sectors: electronics; automotive
+Reliability: 2
+
+Retraction. Northern Business Daily retracts its report RM-DOC-0105 of 2025-03-06 on throughput at Harrowgate.
+
+The 40 percent figure was taken from an unverified spreadsheet and is not supported by port records. We regret the error.

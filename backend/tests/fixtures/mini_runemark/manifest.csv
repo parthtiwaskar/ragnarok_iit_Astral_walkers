@@ -1,0 +1,41 @@
+doc_id,file,title,outlet,pub_date,tier,event_id,format,word_count
+RM-DOC-0101,docs/rm_doc_0101.pdf,Northern channel closed to all commercial traffic,Serpent Canal Authority,2025-03-02,1,EVT-A,pdf,84
+RM-DOC-0102,docs/rm_doc_0102.txt,Brenmark electronics importers scramble as canal shuts,Runewire,2025-03-03,2,EVT-A,txt,54
+RM-DOC-0103,docs/rm_doc_0103.docx,Serpent Canal: salvage complexity points to a long outage,Halvard Analytics,2025-03-05,3,EVT-A,docx,56
+RM-DOC-0104,docs/rm_doc_0104.txt,canal shut for a YEAR??,SkaldPost,2025-03-04,4,EVT-A,txt,33
+RM-DOC-0105,docs/rm_doc_0105.txt,Harrowgate throughput collapses after canal closure,Northern Business Daily,2025-03-06,2,EVT-A,txt,35
+RM-DOC-0106,docs/rm_doc_0106.txt,Retraction: Harrowgate throughput report,Northern Business Daily,2025-03-11,2,EVT-A,txt,35
+RM-DOC-0107,docs/rm_doc_0107.pdf,Ironway Rail Link takes on diverted electronics freight,Freight & Ledger,2025-03-08,2,EVT-A,pdf,56
+RM-DOC-0108,docs/rm_doc_0108.txt,Corvenian forwarders see opportunity in canal closure,Corvenia Courier,2025-03-07,3,EVT-A,txt,35
+RM-DOC-0109,docs/rm_doc_0109.docx,Reopening schedule for the Serpent Canal,Serpent Canal Authority,2025-03-28,1,EVT-A,docx,46
+RM-DOC-0110,docs/rm_doc_0110.txt,Correction: share of Brenmark electronics imports using the canal,Runewire,2025-03-09,2,EVT-A,txt,38
+RM-DOC-0111,docs/rm_doc_0111.txt,Why the canal panic is overdone,The Longship Blog,2025-03-12,4,EVT-A,txt,55
+RM-DOC-0112,docs/rm_doc_0112.pdf,Brenmark assemblers cut shifts as component stocks run down,Northern Business Daily,2025-03-18,2,EVT-A,pdf,50
+RM-DOC-0113,docs/rm_doc_0113.txt,Rail authority adds capacity on the Ironway,Freight & Ledger,2025-04-02,2,EVT-A,txt,54
+RM-DOC-0114,docs/rm_doc_0114.docx,Canal closure: March trade data confirm a sharp drop,Halvard Analytics,2025-04-08,3,EVT-A,docx,35
+RM-DOC-0115,docs/rm_doc_0115.txt,CANAL CHAOS: Brenmark gadget prices to TRIPLE,Daily Thunder,2025-03-20,4,EVT-A,txt,21
+RM-DOC-0116,docs/rm_doc_0116.txt,Canal survey finds further damage; reopening delayed,Runewire,2025-04-20,2,EVT-A,txt,39
+RM-DOC-0120,docs/rm_doc_0120.pdf,Serpent Canal lock failure: five months of closure,Freight & Ledger,2024-10-02,2,EVT-L,pdf,33
+RM-DOC-0121,docs/rm_doc_0121.txt,Explainer: how Brenmark's electronics reach Harrowgate,Runewire,2024-11-15,2,background,txt,29
+RM-DOC-0122,docs/rm_doc_0122.docx,Lock failure strands cargo for weeks,Corvenia Courier,2024-09-20,3,EVT-L,docx,26
+RM-DOC-0123,docs/rm_doc_0123.txt,Explainer: Eskerland's chemical exports,Freight & Ledger,2025-01-10,2,background,txt,25
+RM-DOC-0201,docs/rm_doc_0201.pdf,Eskhaven port operations suspended by strike,Runemark Maritime Council,2025-05-12,1,EVT-B,pdf,32
+RM-DOC-0202,docs/rm_doc_0202.txt,Eskerland chemicals makers count cost of port strike,Runewire,2025-05-13,2,EVT-B,txt,22
+RM-DOC-0203,docs/rm_doc_0203.docx,Union leaders dig in,Eskerland Evening Post,2025-05-15,3,EVT-B,docx,21
+RM-DOC-0204,docs/rm_doc_0204.txt,Fjordvik takes diverted tankers,Freight & Ledger,2025-05-20,2,EVT-B,txt,16
+RM-DOC-0205,docs/rm_doc_0205.txt,strike all summer,Raven Chatter,2025-05-14,4,EVT-B,txt,15
+RM-DOC-0206,docs/rm_doc_0206.pdf,Mediation timetable for Eskhaven,Runemark Maritime Council,2025-06-05,1,EVT-B,pdf,25
+RM-DOC-0301,docs/rm_doc_0301.txt,Corvenia suspends grain exports,Runemark Maritime Council,2025-02-10,1,EVT-C,txt,16
+RM-DOC-0302,docs/rm_doc_0302.docx,Dalmora millers seek new grain suppliers,Northern Business Daily,2025-02-12,2,EVT-C,docx,12
+RM-DOC-0401,docs/rm_doc_0401.txt,ravenmouth strait CLOSED,SkaldPost,2025-03-30,4,EVT-R,txt,14
+RM-DOC-0402,docs/rm_doc_0402.txt,STRAIT SHUT: Eskerland chemicals cut off,Daily Thunder,2025-04-01,4,EVT-R,txt,12
+RM-DOC-0403,docs/rm_doc_0403.pdf,Ravenmouth Strait open to all traffic,Runemark Maritime Council,2025-04-02,1,EVT-R,pdf,28
+RM-DOC-0190,docs/empty_notice.pdf,Empty notice,Runewire,2025-03-10,2,EVT-A,pdf,120
+RM-DOC-0191,docs/cut_report.docx,Cut report,Freight & Ledger,2025-03-14,2,EVT-A,docx,150
+RM-DOC-0192,docs/latin1_mojibake.txt,Harrowgate cafe owners feel the pinch,Corvenia Courier,2025-03-16,3,EVT-A,txt,60
+RM-DOC-0193,docs/dup_of_0101.txt,Northern channel closed (copy),Serpent Canal Authority,2025-03-02,1,EVT-A,txt,90
+RM-DOC-0194,docs/no_header.txt,Harrowgate rail terminal queues,Freight & Ledger,2025-03-19,2,EVT-A,txt,50
+RM-DOC-0195,docs/garbage.pdf,Unknown attachment,Runewire,2025-03-21,2,EVT-A,pdf,100
+RM-DOC-0196,docs/cut_off_story.txt,Assemblers warn of lay-offs,Northern Business Daily,2025-03-22,2,EVT-A,txt,400
+RM-DOC-0197,docs/notice_really_pdf.txt,Pilotage notice,Serpent Canal Authority,2025-03-04,1,EVT-A,pdf,60
+RM-DOC-0198,docs/missing_file.txt,Listed but never delivered,Runewire,2025-03-25,2,EVT-A,txt,80

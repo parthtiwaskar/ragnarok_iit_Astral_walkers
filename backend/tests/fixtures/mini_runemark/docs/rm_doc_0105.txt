@@ -1,0 +1,13 @@
+ID: RM-DOC-0105
+Title: Harrowgate throughput collapses after canal closure
+Source: Northern Business Daily
+Published: 2025-03-06
+Type: news_report
+Event: EVT-A
+Country: Brenmark
+Sector: electronics; automotive
+Tier: 2
+
+Container throughput at Harrowgate has collapsed by 40 percent since the canal closure, according to figures seen by Northern Business Daily.
+
+Port officials declined to comment. Freight forwarders described long queues at the rail terminal.

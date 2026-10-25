@@ -1,0 +1,15 @@
+Sheet: outlets
+
+name | tier | type
+Serpent Canal Authority | 1 | official_notice
+Runemark Maritime Council | 1 | official_notice
+Runewire | 2 | wire_service
+Northern Business Daily | 2 | business_daily
+Freight & Ledger | 2 | trade_press
+Corvenia Courier | 3 | regional_paper
+Halvard Analytics | 3 | analyst_firm
+Eskerland Evening Post | 3 | regional_paper
+SkaldPost | 4 | social_post
+The Longship Blog | 4 | blog
+Daily Thunder | 4 | tabloid
+Raven Chatter | 4 | social_post

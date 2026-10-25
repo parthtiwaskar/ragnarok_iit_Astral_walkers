@@ -1,0 +1,11 @@
+Document ID: RM-DOC-0199
+Headline: Unlisted wire copy
+Publisher: Runewire
+Date: 2025-03-26
+Doc Type: news_report
+Event_ID: EVT-A
+Countries: Brenmark
+Sectors: electronics
+Reliability: 2
+
+Unlisted copy: electronics importers in Brenmark expect canal traffic to resume by summer.

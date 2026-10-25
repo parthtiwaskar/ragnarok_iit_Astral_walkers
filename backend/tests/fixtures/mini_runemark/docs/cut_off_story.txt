@@ -1,0 +1,11 @@
+Doc ID: RM-DOC-0196
+Title: Assemblers warn of lay-offs
+Outlet: Northern Business Daily
+Publication Date: 2025-03-22
+Source Type: news_report
+Event ID: EVT-A
+Country: Brenmark
+Sector: electronics
+Reliability Tier: 2
+
+Assemblers in Brenmark warned of lay-offs as the canal closure entered its third week and the
