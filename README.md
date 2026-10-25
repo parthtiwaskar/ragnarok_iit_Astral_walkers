@@ -1,4 +1,4 @@
-# ⚖️ Trial of the Nine Realms 
+# ⚖️ Trial of the Nine Realms
 
 **An adversarial multi-agent system that puts every supply-chain disruption on trial.**
 
