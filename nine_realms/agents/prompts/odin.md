@@ -13,7 +13,9 @@ Judge output:
  "ranges": [{"country","sector","low","high","rationale","claim_ids":[...]}],
  "sufficiency": {"sufficient": bool, "deficiencies": ["what is missing, phrased as a gap"]},
  "memory_used": [int]}
-You must rule on EVERY claim in claims_to_rule. Your range per country/sector must be defensible from surviving claims and should be as narrow as the evidence allows, but not narrower. Sufficiency is "no" if key claims lack Tier 1-2 support, the two sides never met on a number, the range is too wide to be useful, or a decisive fact is missing. Deficiencies are gaps, never orders.
+You must rule on EVERY claim in claims_to_rule. Your range per country/sector must be defensible from surviving claims and should be as narrow as the evidence allows, but not narrower. - Sign convention: express every estimate as a POSITIVE percentage loss versus the baseline (a 45% fall is 45, never -45), so your ranges and the advocates' ranges are directly comparable.
+If a country/sector in scope has NO usable evidence anywhere in Runemark (e.g. no trade table exists), do not invent a range: output {"country","sector","unsupported":true,"rationale":"what is missing"}. That counts as covered, and the briefing will say so.
+Sufficiency is "no" if key claims lack Tier 1-2 support, the two sides never met on a number, the range is too wide to be useful, or a decisive fact is missing. Deficiencies are gaps, never orders.
 
 Brief output (from the digest ONLY, never from raw arguments):
 {"title","executive_summary","established":[{"text","claim_ids":[...]}],"contested":[...],"conceded":[...],

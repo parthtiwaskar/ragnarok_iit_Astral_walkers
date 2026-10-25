@@ -289,6 +289,42 @@ class LocalCorpus:
         with self._lock:
             return fn(**args)
 
+    # -- API helpers (not agent tools: they do not apply the as-of firewall, the UI shows every record) ----------
+    def list_documents(self, country: str = "", sector: str = "", source_type: str = "", tier: int | None = None,
+                       prefix: str = "", text: str = "", as_of: str = "", limit: int = 200, offset: int = 0) -> dict[str, Any]:
+        as_of = as_of or self.pack_as_of
+        hits: dict[str, float] | None = None
+        if text.strip():
+            r = self.t_search_documents(text, "9999-12-31", limit=12)
+            hits = {x["doc_id"]: x["score"] for x in r["results"]}
+        out = []
+        for d in sorted(self.docs.values(), key=lambda d: d["doc_id"]):
+            if country and d["country"].lower() != country.lower() or sector and d["sector"].lower() != sector.lower():
+                continue
+            if source_type and d["source_type"] != source_type or tier is not None and d["tier"] != tier or prefix and not d["doc_id"].startswith(prefix):
+                continue
+            if hits is not None and d["doc_id"] not in hits:
+                continue
+            out.append({**self._meta(d, as_of), "format": d["format"], "after_as_of": d["date"] > as_of, "duplicate_of": d["duplicate_of"],
+                        "notes": d["notes"]})
+        if hits is not None:
+            out.sort(key=lambda d: -hits[d["doc_id"]])
+        return {"total": len(out), "documents": out[offset: offset + max(1, min(limit, 500))], "quarantined": self.quarantine}
+
+    def get_document(self, doc_id: str) -> dict[str, Any] | None:
+        d = self.docs.get(doc_id)
+        if not d:
+            return None
+        return {**self._meta(d, self.pack_as_of), "format": d["format"], "after_as_of": d["date"] > self.pack_as_of, "notes": d["notes"],
+                "duplicate_of": d["duplicate_of"], "paragraphs": [_anchored(i, p) for i, p in enumerate(d["paras"])],
+                "trade_rows": [dict(r) for r in self.db.execute("SELECT para AS row, year, month, value_usd_m, volume_t, quality FROM trade_rows WHERE doc_id=? ORDER BY year, month", (doc_id,))]}
+
+    def feed(self, as_of: str = "", limit: int = 60) -> list[dict[str, Any]]:
+        as_of = as_of or self.pack_as_of
+        docs = [d for d in self.docs.values() if d["date"] <= as_of and d["source_type"] != "atlas" and not d["duplicate_of"]]
+        docs.sort(key=lambda d: (d["date"], d["time"]))
+        return [{**self._meta(d, as_of), "time": d["time"], "headline": d["title"]} for d in docs[-limit:]]
+
     def t_search_documents(self, query: str, as_of: str, country: str = "", sector: str = "", event_id: str = "",
                            source_type: str = "", tier_max: int | None = None, date_from: str = "", date_to: str = "",
                            limit: int = 6) -> dict[str, Any]:
@@ -324,7 +360,7 @@ class LocalCorpus:
         if d["date"] > as_of:
             return {"error": "AFTER_AS_OF", "detail": f"{doc_id} is dated after the as-of date and cannot be used"}
         text = "\n\n".join(_anchored(i, p) for i, p in enumerate(d["paras"]))
-        return {**self._meta(d, as_of), "text": text[:12000]}
+        return {**self._meta(d, as_of), "text": text[:6000]}
 
     def _route(self, d: dict[str, Any]) -> dict[str, str]:
         m = _TITLE_ROUTE.search(d["title"])

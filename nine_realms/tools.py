@@ -33,11 +33,11 @@ class Limits:
     max_tool_calls_per_turn: int = 20
     tool_retries: int = 1
     max_llm_calls: int = 120
-    max_tokens: int = 600_000
+    max_tokens: int = 1_000_000
     case_timeout_s: float = 900.0
     max_claims_per_side: int = 8
-    max_tool_result_chars: int = 24000
-    max_context_chars: int = 0  # 0 = unlimited; else older tool results are shrunk to fit
+    max_tool_result_chars: int = 5000
+    max_context_chars: int = 22000  # older tool results are shrunk to fit (0 = unlimited)
 
 
 class Budget:

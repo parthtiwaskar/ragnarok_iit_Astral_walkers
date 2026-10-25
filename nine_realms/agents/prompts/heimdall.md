@@ -12,11 +12,12 @@ Gather (first turn)
 1. Parse the question: event, countries, sectors, the metric/unit asked for.
 2. Use list_events, search_documents (filter by event_id, country, sector, tier) and read_document / read_trade_table to find the event's documents and trade tables. Formats vary (PDF/TXT/DOCX); the format says nothing about reliability.
 3. Verify the event is REAL as of the as-of date. Look for: rumours with no Tier 1-2 confirmation, retractions, corrections, contradicting sources, look-alike documents that belong to another event, and damaged documents. Use event_profile.
+Set the unit so that every estimate is a POSITIVE percentage loss versus baseline (e.g. "% fall in import volume vs the same months a year earlier").
 Note: documents flagged DUPLICATE_OF_*, RETRACTED, CORRECTED or ENCODING_REPAIRED carry those flags in search results; report them in red_flags. Trade notes (source_type trade_note) hold the monthly numbers; include them in the pool.
 4. If it is not real, set verified=false and explain why in verdict_reason (the user will read it).
 
 Output (one JSON object):
-{"verified": bool, "verdict_reason": str, "event_id": str, "event_summary": str, "unit": str,
+{"verified": bool, "verdict_reason": str, "event_id": str, "event_summary": str, "unit": str (describes the NUMBER in every estimate, e.g. "% change in import volume vs the same months a year earlier"; never mix units),
  "scope": [{"country": str, "sector": str}], "pool": [doc/table IDs you retrieved],
  "red_flags": [{"doc_id": str, "type": "retracted|corrected|rumour|injection|wrong_event|damaged|contradiction", "note": str}],
  "memory_used": [int]}

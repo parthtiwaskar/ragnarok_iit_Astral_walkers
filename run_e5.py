@@ -15,6 +15,7 @@ from pathlib import Path
 from nine_realms import AnthropicClient, EventBus, Limits, Thing
 from nine_realms.llm import OpenAICompatClient
 from nine_realms.corpus import LocalCorpus
+from nine_realms.store import Store
 
 PACK = "03_Ragnarok Trial of the Nine Realms/dev_pack_E5"
 
@@ -25,7 +26,7 @@ def main() -> int:
     ap.add_argument("--model", default=None)
     ap.add_argument("--provider", choices=["anthropic", "groq"], default="anthropic")
     ap.add_argument("--out", default="runs")
-    ap.add_argument("--db", default="data/runemark.sqlite", help="SQLite database holding the ingested corpus")
+    ap.add_argument("--db", default="data/ragnarisk.sqlite", help="SQLite database holding the ingested corpus")
     ap.add_argument("--memory-dir", default="data/memory", help="persistent per-agent memory, reused across cases")
     ap.add_argument("--max-llm-calls", type=int, default=150)
     args = ap.parse_args()
@@ -36,8 +37,8 @@ def main() -> int:
         return 2
     pack = Path(args.pack)
     manifest = json.loads((pack / "manifest.json").read_text(encoding="utf-8"))
-    question = (pack / "sample_question.txt").read_text(encoding="utf-8").split("-", 1)[-1]
-    question = question.split("\n", 1)[-1].strip() if question.lstrip().startswith("QUESTION") else question.strip()
+    lines = [ln.strip() for ln in (pack / "sample_question.txt").read_text(encoding="utf-8").splitlines() if ln.strip()]
+    question = " ".join(ln for ln in lines if not ln.upper().startswith("QUESTION"))  # drop the "QUESTION - E5 (as of ...)" label
     as_of = manifest["as_of"]
 
     corpus = LocalCorpus(pack, args.db)
@@ -53,6 +54,7 @@ def main() -> int:
 
     (out / "case.json").write_text(json.dumps(case.to_dict(), indent=2, default=str), encoding="utf-8")
     (out / "briefing.md").write_text(case.briefing_md, encoding="utf-8")
+    Store(args.db).import_run_dir(out, args.provider)  # the dashboard reads cases from the database
     print(f"\nStatus: {case.status} {case.status_reasons}\nRuns: {len(case.runs)} · LLM calls: {thing.budget.llm_calls} · tokens: {thing.budget.tokens}")
     print(f"Saved to {out}/\n")
     print(case.briefing_md)

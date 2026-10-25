@@ -42,3 +42,4 @@ data/runemark.sqlite
 data/memory/
 .pytest_cache/
 __pycache__/
+data/ragnarisk.sqlite*

@@ -49,6 +49,10 @@ class Odin(Agent):
                 raise ValueError(f"you must rule on every claim; missing: {missing}")
             ranges = []
             for g in d.get("ranges", []):
+                if g.get("unsupported"):  # no evidence in Runemark for this country/sector: say so, do not invent a range
+                    ranges.append(OdinRange(str(g["country"]), str(g["sector"]), None, None, str(g.get("rationale", "")),
+                                            [], ["unsupported_no_evidence"]))
+                    continue
                 low, high = float(g["low"]), float(g["high"])
                 if low > high:
                     raise ValueError(f"range {g.get('country')}/{g.get('sector')}: low > high")

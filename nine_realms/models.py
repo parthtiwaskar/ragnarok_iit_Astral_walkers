@@ -96,8 +96,8 @@ class Ruling:
 class OdinRange:
     country: str
     sector: str
-    low: float
-    high: float
+    low: float | None
+    high: float | None
     rationale: str = ""
     claim_ids: list[str] = field(default_factory=list)
     flags: list[str] = field(default_factory=list)

@@ -30,7 +30,9 @@ OTHER = {"THOR": "LOKI", "LOKI": "THOR"}
 class Thing:
     def __init__(self, llm: LLMClient, toolbox: ToolBox, *, limits: Limits | None = None,
                  bus: EventBus | None = None, memory_dir: str | Path | None = None,
-                 llms: dict[str, LLMClient] | None = None) -> None:
+                 llms: dict[str, LLMClient] | None = None,
+                 on_update: Callable[[CaseFile], None] | None = None) -> None:
+        self.on_update = on_update  # called after each phase so a UI can show progress
         self.limits = limits or Limits()
         self.bus = bus or EventBus()
         self.budget = Budget(self.limits)
@@ -58,6 +60,7 @@ class Thing:
         case = CaseFile(case_id or f"CASE-{time.strftime('%Y%m%d')}-{uuid.uuid4().hex[:6]}", question, as_of)
         self._t0 = time.time()
         self.bus.emit("case_started", case_id=case.case_id, question=question, as_of=as_of, limits=self.limits.__dict__)
+        self._notify(case)
         try:
             self._run(case)
         except LimitHit as exc:
@@ -69,7 +72,15 @@ class Thing:
             self._brief(case)
         self._reflect(case)
         self.bus.emit("case_finished", case_id=case.case_id, status=case.status, reasons=case.status_reasons)
+        self._notify(case)
         return case
+
+    def _notify(self, case: CaseFile) -> None:
+        if self.on_update:
+            try:
+                self.on_update(case)
+            except Exception as exc:
+                self.bus.emit("persist_error", error=str(exc)[:200])
 
     def _finish(self, case: CaseFile, status: str, reason: str) -> None:
         case.status = status
@@ -100,6 +111,7 @@ class Thing:
             self.heimdall.gather(case)
         except AgentFailure as exc:
             return self._finish(case, "ABORTED", f"Heimdall failed to build the case: {exc}")
+        self._notify(case)
         if not case.verified:
             return self._finish(case, "REJECTED", f"event not verified: {case.verdict_reason}")
 
@@ -116,6 +128,7 @@ class Thing:
                 if not rec.new_doc_ids:
                     return self._finish(case, "INCOMPLETE", f"run {run} could not bring new evidence from Runemark")
             judged = self._trial(case, run, rec, deficiencies)
+            self._notify(case)
             if judged is None:
                 return  # status already set by the failure path
             checklist = self._checklist(case, rec, judged)
@@ -210,6 +223,8 @@ class Thing:
     def _normalise_ranges(self, case: CaseFile, judged: JudgeResult) -> list:
         """Odin's range must lie inside the span of the evidence the two sides actually put forward."""
         for rng in judged.ranges:
+            if rng.low is None or rng.high is None:
+                continue
             ests = [c.estimate for c in case.claims.values() if c.estimate and c.estimate.key == (rng.country, rng.sector)]
             if not ests:
                 rng.flags.append("no_claim_estimates")

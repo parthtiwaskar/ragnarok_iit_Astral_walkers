@@ -26,7 +26,7 @@ def exposure_rows(case: CaseFile) -> list[dict[str, Any]]:
                     if c.side == side and c.estimate and c.estimate.key == key and _surviving(case, c)]
             row[side.lower()] = (min(e.low for e in ests), max(e.high for e in ests)) if ests else None
         odin = next((r for r in case.ranges if (r.country, r.sector) == key), None)
-        row["odin"] = (odin.low, odin.high) if odin else None
+        row["odin"] = (odin.low, odin.high) if odin and odin.low is not None else None
         row["odin_flags"] = odin.flags if odin else ["no_range"]
         rows.append(row)
     return rows

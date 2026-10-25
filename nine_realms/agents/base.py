@@ -84,6 +84,7 @@ class Agent:
                 self.bus.emit("llm_error", agent=self.name, run=run, phase=phase, error=str(exc)[:300])
                 raise AgentFailure(f"{self.name} {phase}: LLM error: {str(exc)[:200]}") from exc
             self.budget.add_tokens(resp.tokens)
+            self.bus.emit("llm_call", agent=self.name, run=run, phase=phase, step=step, tokens=resp.tokens, context_chars=sum(len(str(m.get('content') or '')) for m in messages))
             if resp.tool_calls and not force_final:
                 messages.append({"role": "assistant", "content": resp.text,
                                  "tool_calls": [{"id": c.id, "name": c.name, "args": c.args} for c in resp.tool_calls]})
