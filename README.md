@@ -74,6 +74,24 @@ cd frontend && npm install && npm run dev   # http://localhost:5173
 
 Or `make up` (docker compose: backend + frontend).
 
+### Dashboard and API
+
+Run `make ingest` once, then `make dev` to start the FastAPI service at `http://localhost:8000` and
+`cd frontend && npm run dev` for the dashboard at `http://localhost:5173`. The dashboard opens cases,
+projects the case SSE stream, presents the trial and exposure rows, and opens documents or trade rows from
+citation chips. The REST contract is documented in [`docs/API.md`](docs/API.md).
+
+### Verified E5 rehearsal
+
+The supplied sample question was run on 2026-10-25 with `FakeLLM` and hash embeddings:
+
+```text
+CASE-20261025-6a38 · 3 runs · INCOMPLETE: MAX_RUNS_REACHED_INSUFFICIENT
+```
+
+This is an expected safe outcome for the deterministic offline policy player: it preserves the insufficiency
+rather than inventing a complete result. Run `make e5` to repeat it.
+
 ### CLI
 
 ```bash
