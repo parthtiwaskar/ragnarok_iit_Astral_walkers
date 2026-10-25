@@ -1,17 +1,20 @@
 // Ragnarisk dashboard. Every page reads from the local API (/api/*), which is backed by one SQLite database.
 const content = document.querySelector("#page-content");
-const overviewMarkup = content.innerHTML;
+const overviewMarkup = document.querySelector("#overview-template").innerHTML;  // the Dashboard tab
 const breadcrumb = document.querySelector("#breadcrumb-current");
 const modal = document.querySelector("#modal-backdrop");
 const toast = document.querySelector("#toast");
 const sheet = document.querySelector("#doc-sheet");
 let toastTimeout;
-let activeQuestion = sessionStorage.getItem("ragnarisk-active-question") || document.querySelector("#investigation-query").value;
+const SAMPLE_QUESTION = "As of 25 January 2027, how exposed are Midgard and Tolan to the end of the Orvan corridor agreement? Give a low and high range for wheat and maize imports.";
+let activeQuestion = sessionStorage.getItem("ragnarisk-active-question") || SAMPLE_QUESTION;
 
-const state = { caseId: sessionStorage.getItem("ragnarisk-case") || "", cases: [], running: null, canRun: false, live: [], lastSeq: -1, timer: null, feed: [], feedTimer: null, run: null };
+const state = { caseId: sessionStorage.getItem("ragnarisk-case") || "", cases: [], running: null, canRun: false, live: [], lastSeq: -1, timer: null, feed: [], feedTimer: null, run: null,
+  answerId: sessionStorage.getItem("ragnarisk-answer") || "", asOf: "", askNotice: "" };
 
 const pageTitles = {
-  overview: "Overview",
+  ask: "Ask",
+  overview: "Dashboard",
   investigations: "Investigations",
   evidence: "Evidence explorer",
   council: "Agent council",
@@ -95,8 +98,10 @@ function renderPage(page) {
   if (!Object.hasOwn(pageTitles, page)) return;
   (state.charts || []).forEach((c) => c.destroy());
   state.charts = [];
-  breadcrumb.textContent = pageTitles[page];
-  document.querySelectorAll(".nav-link[data-page]").forEach((link) => link.classList.toggle("active", link.dataset.page === page));
+  if (breadcrumb) breadcrumb.textContent = pageTitles[page];
+  document.querySelectorAll(".tab[data-page]").forEach((link) => link.classList.toggle("active", link.dataset.page === page));
+  document.title = page === "ask" ? "Ragnarisk — Ask" : `Ragnarisk — ${pageTitles[page]}`;
+  if (page === "ask") return renderAsk();
   if (page === "overview") {
     content.innerHTML = overviewMarkup;
     const query = document.querySelector("#investigation-query");
@@ -107,7 +112,10 @@ function renderPage(page) {
   ({ investigations: renderInvestigations, evidence: renderEvidence, council: renderCouncil, briefing: renderBriefing })[page]();
 }
 
-const refreshCurrent = () => renderPage(window.location.hash.slice(1) || "overview");
+// "#ask/<case_id>" is a shareable link to one answer; the page is the part before the slash.
+const currentPage = () => (window.location.hash.slice(1) || "ask").split("/")[0];
+const linkedAnswer = () => decodeURIComponent((window.location.hash.slice(1).split("/")[1]) || "");
+const refreshCurrent = () => renderPage(currentPage());
 
 // ---- overview ---------------------------------------------------------------------
 async function hydrateOverview() {
@@ -396,7 +404,7 @@ function startPolling(id) {
         state.lastSeq = data.events[data.events.length - 1].seq;
         state.live.push(...data.events.map(describeEvent).filter(Boolean));
         state.live = state.live.slice(-30);
-        if (["council", "briefing", "overview"].includes(window.location.hash.slice(1) || "overview")) { state.run = null; refreshCurrent(); }
+        if (["ask", "council", "briefing", "overview"].includes(currentPage())) { state.run = null; refreshCurrent(); }
       }
       if (!data.is_running) {
         state.running = null;
@@ -693,6 +701,271 @@ function statusBars(run) {
   return `<div class="status-bars" aria-label="Claims by ruling">${row("THOR", "THOR")}${row("LOKI", "LOKI")}<p class="chart-note" style="margin:0">Click a segment to show only those claims. Click again to clear.</p></div>`;
 }
 
+// ---- ask: the first screen (question in, answer with evidence out) ---------------
+const normQ = (q) => String(q || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+
+function recentAnswers() {
+  const recent = state.cases.filter((c) => c.rulings > 0).slice(0, 4);
+  if (!recent.length) return "";
+  return `<span class="ask-recent-label">Recent answers</span>${recent.map((c) =>
+    `<button class="ask-recent-item" data-action="show-answer" data-case="${escapeHtml(c.case_id)}"><span>${escapeHtml((c.question || "").replace(/^As of [^,]+,\s*/i, "").replace(/^\w/, (ch) => ch.toUpperCase()))}</span><small>${escapeHtml((STATUS[c.status] || [0, c.status])[1])} · as of ${escapeHtml(fmtDate(c.as_of))}</small></button>`).join("")}`;
+}
+
+function renderAsk() {
+  const answering = state.answerId && state.running === state.answerId;
+  content.innerHTML = `
+    <section class="ask-hero${state.answerId ? " has-answer" : ""}">
+      <span class="ask-badge"><i></i> Adversarial AI · every number traced to a source</span>
+      <h1>Ask about a <span class="grad">supply-chain disruption</span></h1>
+      <p class="ask-lede">Four AI agents check the event, argue both sides from the Runemark corpus, and a judge rules on every claim. You get a range, the evidence behind it, and a PDF report.</p>
+      <form class="ask-box" id="ask-form">
+        <label for="ask-query" class="sr-only">Your question</label>
+        <textarea id="ask-query" rows="3" placeholder="For example: how exposed is Midgard to the end of the Orvan corridor agreement?">${escapeHtml(activeQuestion)}</textarea>
+        <div class="ask-row">
+          <label class="ask-date">As of <input type="date" id="ask-asof" value="${escapeHtml(state.asOf)}" /></label>
+          <button type="button" class="link-btn" data-action="ask-example">Use the sample question</button>
+          <button class="button button-primary ask-go" type="submit" ${answering ? "disabled" : ""}>${answering ? "Answering…" : "Get answer"} <span>→</span></button>
+        </div>
+      </form>
+      ${state.askNotice ? `<p class="ask-notice" role="status">${escapeHtml(state.askNotice)}</p>` : ""}
+      <ol class="how" aria-label="How an answer is made">
+        <li><span class="how-icons"><span class="how-ico h">H</span></span><b>Verify</b><small>Heimdall checks the event is real as of your date</small></li>
+        <li><span class="how-icons"><span class="how-ico t">T</span><span class="how-ico l">L</span></span><b>Argue</b><small>Thor and Loki make sealed cases, then cross-examine</small></li>
+        <li><span class="how-icons"><span class="how-ico o">O</span></span><b>Rule</b><small>Odin judges every claim; code bounds the range</small></li>
+        <li><span class="how-icons"><span class="how-ico r">▤</span></span><b>Report</b><small>Answer, evidence and a PDF you can hand over</small></li>
+      </ol>
+      <div class="ask-recent" id="ask-recent">${recentAnswers()}</div>
+    </section>
+    <section class="answer" id="answer" aria-live="polite"></section>`;
+  if (!state.cases.length) refreshCases().then(() => { const el = document.querySelector("#ask-recent"); if (el) el.innerHTML = recentAnswers(); }).catch(() => {});
+  if (!state.asOf) api("/health").then((h) => { state.asOf = h.as_of_default || ""; const el = document.querySelector("#ask-asof"); if (el && !el.value) el.value = state.asOf; }).catch(() => {});
+  if (answering) document.querySelector("#answer").innerHTML = progressMarkup();
+  else if (state.answerId) showAnswer(state.answerId, { scroll: false });
+}
+
+function progressMarkup() {
+  const lines = state.live.slice(-8);
+  return `<div class="answer-card working"><span class="spinner" aria-hidden="true"></span><div><h2>Working on your answer…</h2>
+    <p>Heimdall checks the event, Thor and Loki argue opposite sides, then Odin rules on every claim. This usually takes a few minutes.</p>
+    ${lines.length ? `<ol class="live-lines">${lines.map((l) => `<li>${escapeHtml(l)}</li>`).join("")}</ol>` : ""}</div></div>`;
+}
+
+async function askQuestion(question, asOf) {
+  question = question.trim();
+  if (question.length < 10) return showToast("Type a question of at least 10 characters.");
+  activeQuestion = question;
+  sessionStorage.setItem("ragnarisk-active-question", activeQuestion);
+  state.askNotice = "";
+  try { await refreshCases(); } catch (error) { return showToast(error.message); }
+  const wanted = asOf || state.asOf;
+  // the same question (and date) already answered: show it instead of paying for a new trial
+  const saved = state.cases.find((c) => normQ(c.question) === normQ(question) && (!wanted || c.as_of === wanted) && c.rulings > 0 && c.status !== "ABORTED");
+  if (saved) return showAnswer(saved.case_id);
+  if (!state.canRun) {
+    state.askNotice = "Live answers are off on this server because no LLM key is configured. Open a recent answer below, or add a key and restart the server.";
+    return renderAsk();
+  }
+  try {
+    const { case_id: id } = await api("/cases", { method: "POST", body: JSON.stringify({ question, ...(asOf ? { as_of: asOf } : {}) }) });
+    Object.assign(state, { answerId: id, caseId: id, run: null, live: [] });
+    sessionStorage.setItem("ragnarisk-answer", id);
+    sessionStorage.setItem("ragnarisk-case", id);
+    startPolling(id);
+    renderAsk();
+  } catch (error) {
+    showToast(error.status === 409 ? "Another question is being answered. Wait for it to finish." : error.message);
+  }
+}
+
+async function showAnswer(id, { scroll = true } = {}) {
+  Object.assign(state, { answerId: id, caseId: id });
+  sessionStorage.setItem("ragnarisk-answer", id);
+  sessionStorage.setItem("ragnarisk-case", id);
+  if (currentPage() !== "ask") return navigate("ask");  // renderAsk shows it
+  if (linkedAnswer() !== id) history.replaceState(null, "", `#ask/${encodeURIComponent(id)}`);  // shareable, no re-render
+  const root = document.querySelector("#answer");
+  if (!root) return;
+  root.innerHTML = skeleton();
+  try {
+    const info = await loadCase(id, true);
+    if (state.answerId !== id) return;
+    root.innerHTML = answerMarkup(info.case);
+    [...root.children].forEach((el, i) => el.style.setProperty("--i", i));  // staggered reveal
+    root.classList.remove("reveal");
+    void root.offsetWidth;
+    root.classList.add("reveal");
+    document.querySelector(".ask-hero")?.classList.add("has-answer");
+    if (scroll) root.scrollIntoView({ behavior: "smooth", block: "start" });
+  } catch (error) {
+    root.innerHTML = errorBox("Could not load this answer", error.message);
+  }
+}
+
+// Established findings: Odin's briefing when he wrote one, else the claims he ruled established.
+function establishedFindings(run) {
+  const fromBrief = run.briefing?.established || [];
+  if (fromBrief.length) return fromBrief;
+  return Object.values(run.claims || {}).filter((c) => run.rulings?.[c.id]?.status === "established").map((c) => ({ text: c.text, claim_ids: [c.id] }));
+}
+
+// One chip per source document; its popover lists every quoted passage from it.
+function sourceChips(run, claimIds) {
+  const byDoc = new Map();
+  uniqueEvidence(run, claimIds).forEach((e) => byDoc.set(e.doc_id, [...(byDoc.get(e.doc_id) || []), e]));
+  return [...byDoc.values()].map((quotes) => {
+    const e = quotes[0];
+    return `<details class="cite"><summary>${escapeHtml(e.doc_id)} · Tier ${escapeHtml(e.tier ?? "?")} · ${escapeHtml(e.date || "undated")}${quotes.length > 1 ? ` · ${quotes.length} quotes` : ""}</summary><div class="pop">${quotes.slice(0, 3).map((q) => `<q>“${escapeHtml(q.quote)}”</q>`).join("")}<button class="chip-btn" data-action="open-doc" data-doc="${escapeHtml(e.doc_id)}" data-locator="${escapeHtml(e.locator)}" data-quote="${escapeHtml(e.quote)}">Open source →</button></div></details>`;
+  }).join("");
+}
+
+// Odin's own summary when he wrote one; his "could not draft" fallback line is not an answer.
+const answerSummary = (run) => {
+  const own = run.briefing?.executive_summary || "";
+  return own && !/could not draft/i.test(own) ? ["Summary", own] : run.event_summary ? ["What happened", run.event_summary] : null;
+};
+
+function uniqueEvidence(run, claimIds) {
+  const seen = new Set();
+  return claimIds.flatMap((id) => run.claims?.[id]?.evidence || []).filter((e) => !seen.has(e.doc_id + e.quote) && seen.add(e.doc_id + e.quote));
+}
+
+const bandOf = (range) => { const [lo, hi] = magnitude(range); return RATING_BANDS.find((b) => (lo + hi) / 2 < b.max); };
+const fmtShort = (range) => { const [a, b] = magnitude(range); return `${round1(a)}–${round1(b)}%`; };
+
+// Thor's and Loki's cases as thin bars, Odin's ruling as the thick one, on a 0-100% scale.
+function rangeBar(row) {
+  const pos = (range) => { const [a, b] = magnitude(range); return `left:${Math.min(a, 100)}%;width:${Math.max(Math.min(b, 100) - Math.min(a, 100), 1.2)}%`; };
+  return `<div class="ans-bar" aria-hidden="true"><div class="ans-track">${row.thor ? `<span class="b-thor" style="${pos(row.thor)}"></span>` : ""}${row.loki ? `<span class="b-loki" style="${pos(row.loki)}"></span>` : ""}<span class="b-odin" style="${pos(row.odin)}"></span></div>
+    <div class="ans-axis"><span>0%</span><span>25%</span><span>50%</span><span>75%</span><span>100%</span></div></div>`;
+}
+
+function answerRow(row) {
+  const scope = `<span class="ans-scope">${escapeHtml(row.country)} <b>·</b> ${escapeHtml(row.sector)}</span>`;
+  if (!row.odin) return `<li class="ans-row rating-none">${scope}<span class="ans-range">No range</span><span class="ans-sides">No usable evidence for this flow in the corpus, so no number is given rather than a guess.</span></li>`;
+  const band = bandOf(row.odin);
+  const sides = [row.thor && `<span class="k-thor">Thor (high case) ${fmtShort(row.thor)}</span>`, row.loki && `<span class="k-loki">Loki (low case) ${fmtShort(row.loki)}</span>`, `<span class="k-odin">Odin's ruling ${fmtShort(row.odin)}</span>`].filter(Boolean).join("");
+  return `<li class="ans-row rating-${band.key}">${scope}<span class="ans-range">${fmtRange(row.odin)}<small>expected fall in imports</small></span><span class="rating-pill"><i></i>${band.label}</span>${rangeBar(row)}<span class="ans-sides">${sides}</span></li>`;
+}
+
+// One plain sentence built from the ruled ranges (code, not the model), plus the highest rating.
+function verdict(rows) {
+  const ruled = rows.filter((r) => r.odin);
+  if (!ruled.length) return "";
+  const top = RATING_BANDS[Math.max(...ruled.map((r) => RATING_BANDS.indexOf(bandOf(r.odin))))];
+  const missing = rows.filter((r) => !r.odin).map((r) => `${r.country} ${r.sector.toLowerCase()}`);
+  const text = `Imports are expected to fall ${ruled.map((r) => `<b>${fmtShort(r.odin)}</b> for ${escapeHtml(r.country)} ${escapeHtml(r.sector.toLowerCase())}`).join(", ")}.${missing.length ? ` No range for ${escapeHtml(missing.join(", "))}: the corpus holds no usable evidence.` : ""}`;
+  return `<div class="verdict rating-${top.key}"><span class="verdict-label"><i></i>${top.label} exposure</span><p>${text}</p></div>`;
+}
+
+function rigorStats(run) {
+  const sources = new Set(Object.values(run.claims || {}).flatMap((c) => c.evidence.map((e) => e.doc_id))).size;
+  const stats = [[(run.runs || []).length, "trial runs"], [Object.keys(run.claims || {}).length, "claims argued"], [Object.keys(run.attacks || {}).length, "cross-examinations"],
+    [Object.keys(run.rulings || {}).length, "rulings"], [sources, "sources cited"], [(run.red_flags || []).length, "traps caught"]];
+  return `<div class="rigor">${stats.map(([n, label]) => `<span><b>${n}</b>${label}</span>`).join("")}</div>`;
+}
+
+function answerMarkup(run) {
+  const head = `<header class="answer-head"><span class="answer-kicker">Answer</span><p class="answer-q">${escapeHtml(run.question)}</p>
+    <div class="answer-meta">${statusBadge(run.status)}${run.verified ? '<span class="verified">✓ Event verified</span>' : ""}<span>As of ${escapeHtml(fmtDate(run.as_of))}</span><span>Case ${escapeHtml(run.case_id)}</span>${run.provider === "imported" ? "<span>Saved trial</span>" : ""}</div></header>`;
+  if (!["COMPLETE", "INCOMPLETE"].includes(run.status)) {
+    const rejected = run.status === "REJECTED";
+    const why = rejected ? run.verdict_reason || friendlyReason(run.status_reasons) : (run.status_reasons || []).join(" ") || "The trial stopped before any ruling.";
+    return `${head}<div class="answer-card"><h2>${rejected ? "The event could not be verified" : "This question could not be answered"}</h2><p>${escapeHtml(why)}</p>
+      <div class="answer-actions"><button class="button button-quiet" data-action="ask-again">Ask another question</button></div></div>`;
+  }
+  const rows = exposureRows(run);
+  const findings = establishedFindings(run);
+  const flags = run.red_flags || [];
+  const summary = answerSummary(run);
+  const trap = (f) => `<li><button class="chip-btn" data-action="open-doc" data-doc="${escapeHtml(f.doc_id)}">${escapeHtml(f.doc_id)}</button><span class="trap-type">${escapeHtml(String(f.type).replace(/_/g, " "))}</span><span>${escapeHtml(f.note)}</span></li>`;
+  const provisional = run.status !== "COMPLETE"
+    ? `<p class="answer-flag"><b>Provisional.</b> ${escapeHtml(friendlyReason(run.status_reasons))} The ranges come from the rulings that were made.</p>` : "";
+  return `${head}
+    ${verdict(rows)}
+    ${rigorStats(run)}
+    ${provisional}
+    <ul class="ans-rows">${rows.length ? rows.map(answerRow).join("") : '<li class="ans-row rating-none"><span class="ans-sides">No ranges were ruled.</span></li>'}</ul>
+    ${summary ? `<div class="answer-block"><h2>${summary[0]}</h2><p>${escapeHtml(summary[1])}</p></div>` : ""}
+    <div class="answer-block"><h2>Why: the evidence <em>${findings.length}</em></h2><p class="hint">Findings that survived cross-examination. Click a source to see the exact passage.</p>
+      ${findings.length ? findings.map((f) => `<div class="finding">${escapeHtml(f.text)}<div class="cites">${sourceChips(run, f.claim_ids)}</div></div>`).join("") : '<p class="hint">Nothing was established yet.</p>'}</div>
+    ${flags.length ? `<div class="answer-block"><h2>Traps caught <em>${flags.length}</em></h2><p class="hint">Sources the system flagged and did not rely on as written.</p>
+      <ul class="trap-list">${flags.slice(0, 5).map(trap).join("")}</ul>
+      ${flags.length > 5 ? `<details class="more-traps"><summary>Show all ${flags.length}</summary><ul class="trap-list">${flags.slice(5).map(trap).join("")}</ul></details>` : ""}</div>` : ""}
+    ${findingsSection(run, "Disputed", "Credible sources disagree. Not settled.", run.briefing?.contested, false)}
+    ${findingsSection(run, "Ruled out", "Claims a side conceded, or Odin rejected.", run.briefing?.conceded, false)}
+    <div class="answer-actions">
+      <button class="button button-primary" data-action="download-report">Download PDF report</button>
+      <a class="button button-quiet" href="#council" data-page="council">See the full debate</a>
+      <button class="button button-quiet" data-action="ask-again">Ask another question</button>
+    </div>`;
+}
+
+// ---- PDF report: a print-only document; the browser's "Save as PDF" writes the file --
+function reportMarkup(run) {
+  const rows = exposureRows(run);
+  const findings = establishedFindings(run);
+  const brief = run.briefing || {};
+  const runs = run.runs || [];
+  const count = (key) => Object.keys(run[key] || {}).length;
+  const docs = new Map();
+  Object.values(run.claims || {}).forEach((c) => c.evidence.forEach((e) => docs.set(e.doc_id, e)));
+  const cite = (e) => `<li><b>${escapeHtml(e.doc_id)}</b> · Tier ${escapeHtml(e.tier ?? "?")} · ${escapeHtml(e.date || "undated")}${e.locator ? ` · ${escapeHtml(e.locator)}` : ""}<q>${escapeHtml(e.quote)}</q></li>`;
+  const textList = (items) => (items || []).map((i) => `<li>${escapeHtml(i.text)}</li>`).join("");
+  const noRange = rows.filter((r) => !r.odin).map((r) => `${r.country} ${r.sector}`);
+  return `
+    <article class="rp">
+      <header class="rp-head"><div><strong>RAGNARISK</strong><span>Supply-chain exposure report</span></div>
+        <dl><dt>Case</dt><dd>${escapeHtml(run.case_id)}</dd><dt>As of</dt><dd>${escapeHtml(fmtDate(run.as_of))}</dd><dt>Status</dt><dd>${escapeHtml((STATUS[run.status] || [0, run.status])[1])}</dd><dt>Generated</dt><dd>${escapeHtml(new Date().toLocaleString("en-GB"))}</dd></dl></header>
+
+      <h1>${escapeHtml(run.question)}</h1>
+      ${run.status !== "COMPLETE" ? `<p class="rp-flag"><b>Provisional.</b> ${escapeHtml(friendlyReason(run.status_reasons))} Treat the ranges as a first pass.</p>` : ""}
+
+      <h2>1. Answer</h2>
+      <table class="rp-table"><thead><tr><th>Country</th><th>Sector</th><th>Expected fall in imports</th><th>Rating</th><th>High case (Thor)</th><th>Low case (Loki)</th></tr></thead><tbody>
+        ${rows.map((r) => { const band = r.odin && RATING_BANDS.find((b) => { const [lo, hi] = magnitude(r.odin); return (lo + hi) / 2 < b.max; });
+          return `<tr><td>${escapeHtml(r.country)}</td><td>${escapeHtml(r.sector)}</td><td><b>${r.odin ? fmtRange(r.odin) : "No range: no usable evidence"}</b></td><td>${band ? band.label : "—"}</td><td>${fmtRange(r.thor)}</td><td>${fmtRange(r.loki)}</td></tr>`; }).join("")}
+      </tbody></table>
+      <p class="rp-note">Ratings use the middle of the judged range: Low under 10%, Moderate 10–30%, High 30–55%, Severe over 55%.</p>
+      ${answerSummary(run) ? `<p>${escapeHtml(answerSummary(run)[1])}</p>` : ""}
+
+      <h2>2. Why this answer</h2>
+      ${run.verdict_reason ? `<h3>The event was verified first</h3><p>${escapeHtml(run.verdict_reason)}</p>` : ""}
+      <h3>Findings that survived cross-examination</h3>
+      ${findings.length ? findings.map((f) => `<div class="rp-finding"><p>${escapeHtml(f.text)}</p><ul class="rp-cites">${uniqueEvidence(run, f.claim_ids).slice(0, 4).map(cite).join("")}</ul></div>`).join("") : "<p>Nothing was established.</p>"}
+      ${(run.ranges || []).filter((g) => g.rationale).length ? `<h3>How the judge set each range</h3><ul>${run.ranges.filter((g) => g.rationale).map((g) => `<li><b>${escapeHtml(g.country)} · ${escapeHtml(g.sector)}:</b> ${escapeHtml(g.rationale)}</li>`).join("")}</ul>` : ""}
+      ${brief.contested?.length ? `<h3>Disputed (not settled)</h3><ul>${textList(brief.contested)}</ul>` : ""}
+      ${brief.conceded?.length ? `<h3>Ruled out</h3><ul>${textList(brief.conceded)}</ul>` : ""}
+
+      ${(run.red_flags || []).length ? `<h2>3. Traps and data quality</h2><ul>${run.red_flags.map((f) => `<li><b>${escapeHtml(f.doc_id)} (${escapeHtml(String(f.type).replace(/_/g, " "))}):</b> ${escapeHtml(f.note)}</li>`).join("")}</ul>` : ""}
+
+      <h2>${(run.red_flags || []).length ? "4" : "3"}. How the answer was reached</h2>
+      <p>Heimdall first checked that the event was real as of the date above and gathered the evidence. Thor argued for high exposure and Loki for limited exposure. They submitted their claims sealed and at the same time, each citing documents or trade-table rows, then cross-examined each other. Odin, the judge, ruled on every claim as a sourced fact or an inference, and as established, disputed or conceded. Code keeps his range inside the span of the evidence-backed estimates. Every citation was checked against the source text, and nothing published after the as-of date was available to the agents.</p>
+      <p class="rp-note">This case: ${runs.length} trial run${runs.length === 1 ? "" : "s"} · ${count("claims")} claims · ${count("attacks")} attacks · ${count("rulings")} rulings · ${docs.size} sources cited.</p>
+
+      <h2>${(run.red_flags || []).length ? "5" : "4"}. Limitations</h2>
+      <ul>
+        ${run.status !== "COMPLETE" ? `<li>${escapeHtml((run.status_reasons || []).join(" ") || "The trial did not finish.")}</li>` : ""}
+        ${noRange.length ? `<li>No range for ${escapeHtml(noRange.join(", "))}: the corpus held no usable evidence for it.</li>` : ""}
+        <li>Ranges are a judgment over the cited Runemark evidence, not a forecast from outside data.</li>
+      </ul>
+
+      <h2>Sources cited</h2>
+      <table class="rp-table rp-sources"><thead><tr><th>Document</th><th>Tier</th><th>Published</th></tr></thead><tbody>
+        ${[...docs.values()].sort((a, b) => a.doc_id.localeCompare(b.doc_id)).map((e) => `<tr><td>${escapeHtml(e.doc_id)}</td><td>${escapeHtml(e.tier ?? "?")}</td><td>${escapeHtml(e.date || "undated")}</td></tr>`).join("")}
+      </tbody></table>
+    </article>`;
+}
+
+function downloadReport() {
+  const run = state.run?.id === state.answerId ? state.run.case : null;
+  if (!run) return showToast("Open an answer first.");
+  document.querySelector("#report-root").innerHTML = reportMarkup(run);
+  state.titleBeforePrint = document.title;
+  document.title = `Ragnarisk report ${run.case_id}`;  // becomes the suggested PDF file name
+  showToast("Choose “Save as PDF” in the print dialog.");
+  setTimeout(() => window.print(), 50);
+}
+
 // ---- dialog & events --------------------------------------------------------------
 function openDialog() { modal.hidden = false; document.querySelector("#dialog-query").value = activeQuestion; document.querySelector("#dialog-query").focus(); }
 function closeDialog() { modal.hidden = true; }
@@ -710,7 +983,11 @@ document.addEventListener("click", (event) => {
   }
   const d = target.dataset;
   switch (d.action) {
-    case "new-investigation": openDialog(); break;
+    case "new-investigation": navigate("ask"); document.querySelector("#ask-query")?.focus(); break;
+    case "ask-example": { const q = document.querySelector("#ask-query"); if (q) { q.value = SAMPLE_QUESTION; activeQuestion = SAMPLE_QUESTION; q.focus(); } break; }
+    case "show-answer": showAnswer(d.case); break;
+    case "ask-again": state.answerId = ""; state.askNotice = ""; sessionStorage.removeItem("ragnarisk-answer"); history.replaceState(null, "", "#ask"); renderAsk(); document.querySelector("#ask-query")?.focus(); break;
+    case "download-report": downloadReport(); break;
     case "close-dialog": closeDialog(); break;
     case "clear-query": document.querySelector("#investigation-query").value = ""; break;
     case "submit-dialog": submitInvestigation(document.querySelector("#dialog-query").value); break;
@@ -733,13 +1010,18 @@ document.addEventListener("submit", (event) => {
     window.location.reload();
     return;
   }
+  if (event.target.id === "ask-form") {
+    event.preventDefault();
+    askQuestion(document.querySelector("#ask-query").value, document.querySelector("#ask-asof").value);
+    return;
+  }
   if (event.target.id !== "investigation-form") return;
   event.preventDefault();
   submitInvestigation(document.querySelector("#investigation-query").value);
 });
 
 document.addEventListener("input", (event) => {
-  if (event.target.id === "investigation-query") {
+  if (event.target.id === "investigation-query" || event.target.id === "ask-query") {
     activeQuestion = event.target.value;
     sessionStorage.setItem("ragnarisk-active-question", activeQuestion);
   }
@@ -754,17 +1036,34 @@ document.addEventListener("change", (event) => {
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") { if (!modal.hidden) closeDialog(); if (!sheet.hidden) closeSheet(); }
   if (event.key === "Enter" && event.target.id === "dialog-query" && (event.metaKey || event.ctrlKey)) submitInvestigation(event.target.value);
+  if (event.key === "Enter" && event.target.id === "ask-query" && !event.shiftKey) { event.preventDefault(); event.target.form?.requestSubmit(); }
 });
 
 window.addEventListener("hashchange", () => {
-  const page = window.location.hash.slice(1) || "overview";
+  const page = currentPage();
   if (Object.hasOwn(pageTitles, page)) renderPage(page);
 });
 
+window.addEventListener("afterprint", () => { if (state.titleBeforePrint) { document.title = state.titleBeforePrint; state.titleBeforePrint = ""; } });
+
+// ?report=<case_id> builds the printable report on load, so a report can be linked to or printed headlessly.
+async function prepareLinkedReport() {
+  const id = new URLSearchParams(window.location.search).get("report");
+  if (!id) return;
+  try {
+    const info = await loadCase(id, true);
+    document.querySelector("#report-root").innerHTML = reportMarkup(info.case);
+    document.title = `Ragnarisk report ${id}`;
+  } catch (error) {
+    showToast(`Could not build the report: ${error.message}`);
+  }
+}
+
 (async function boot() {
-  const initialPage = window.location.hash.slice(1);
-  if (Object.hasOwn(pageTitles, initialPage) && initialPage !== "overview") renderPage(initialPage);
-  else hydrateOverview();
+  const initialPage = currentPage();
+  if (initialPage === "ask" && linkedAnswer()) state.answerId = linkedAnswer();
+  renderPage(Object.hasOwn(pageTitles, initialPage) ? initialPage : "ask");
+  prepareLinkedReport();
   try {
     const health = await api("/health");
     if (health.auth_required && !getToken()) askToken();
