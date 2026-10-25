@@ -18,6 +18,7 @@ from .agents.advocates import Loki, Thor
 from .agents.base import AgentFailure
 from .agents.heimdall import Heimdall
 from .agents.odin import JudgeResult, Odin
+from .debate import debate_stats
 from .events import EventBus
 from .llm import LLMClient
 from .memory import Memory
@@ -196,19 +197,21 @@ class Thing:
             case.responses[r.attack_id] = r
             rec.responses.append(r.attack_id)
             claim = case.claims[case.attacks[r.attack_id].target_claim_id]
-            if r.action == "CONCEDE":
-                if r.revised_estimate:
-                    claim.estimate, claim.status = r.revised_estimate, "amended"
-                else:
-                    claim.status = "conceded"
+            if r.action == "REVISE" and r.revised_estimate:
+                claim.estimate, claim.status = r.revised_estimate, "amended"  # partly conceded, claim survives in narrower form
+                self.bus.emit("revision", run=run, claim_id=claim.id, by=r.by, attack_id=r.attack_id, note=r.note)
+            elif r.action == "CONCEDE":
+                claim.status = "conceded"
                 self.bus.emit("concession", run=run, claim_id=claim.id, by=r.by, attack_id=r.attack_id, note=r.note)
+        rec.debate = debate_stats(case, rec.attacks, rec.responses)
+        self.bus.emit("debate_stats", run=run, **rec.debate)
 
         # Judgment: new claims plus any older claim attacked in this run.
         to_rule = {c.id: c for c in case.claims.values() if c.run == run}
         for a in attacks:
             to_rule[a.target_claim_id] = case.claims[a.target_claim_id]
         try:
-            judged = self.odin.judge(case, run, list(to_rule.values()), attacks, responses, rec.unchallenged_side)
+            judged = self.odin.judge(case, run, list(to_rule.values()), attacks, responses, rec.unchallenged_side, rec.debate)
         except AgentFailure as exc:
             rec.failures.append(f"Odin failed to judge: {exc}")
             self._finish(case, "INCOMPLETE", f"Odin failed to rule on run {run}: {exc}")
@@ -250,6 +253,9 @@ class Thing:
             gaps.append("S3: some attacks were never answered")
         covered = {(r.country, r.sector) for r in judged.ranges}
         gaps += [f"S4: no range for {c}/{s}" for c, s in case.scope if (c, s) not in covered]
+        if rec.debate.get("mass_concession"):
+            gaps.append(f"S7: {int(rec.debate['concession_rate'] * 100)}% of attacked claims were conceded; the debate may have collapsed into agreement "
+                        "instead of testing the claims")
         if not any(r.status == "established" for r in case.rulings.values()):
             gaps.append("S5: nothing was established")
         for r in case.rulings.values():

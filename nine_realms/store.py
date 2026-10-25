@@ -175,13 +175,18 @@ class Store:
                        "claim_ids": json.loads(g["claim_ids"] or "[]"), "flags": json.loads(g["flags"] or "[]")}
                       for g in self.db.execute("SELECT * FROM ranges WHERE case_id=?", (case_id,))]
             runs = [json.loads(r["data"]) for r in self.db.execute("SELECT data FROM runs WHERE case_id=? ORDER BY run", (case_id,))]
-        return {"case_id": c["case_id"], "question": c["question"], "as_of": c["as_of"], "event_id": c["event_id"],
+        out = {"case_id": c["case_id"], "question": c["question"], "as_of": c["as_of"], "event_id": c["event_id"],
                 "event_summary": c["event_summary"], "verified": None if c["verified"] is None else bool(c["verified"]),
                 "verdict_reason": c["verdict_reason"], "unit": c["unit"], "scope": json.loads(c["scope"] or "[]"),
                 "pool": json.loads(c["pool"] or "[]"), "red_flags": json.loads(c["red_flags"] or "[]"), "claims": claims,
                 "attacks": attacks, "responses": responses, "rulings": rulings, "ranges": ranges, "runs": runs, "status": c["status"],
                 "status_reasons": json.loads(c["status_reasons"] or "[]"), "briefing": json.loads(c["briefing"] or "{}"),
                 "briefing_md": c["briefing_md"] or "", "provider": c["provider"], "created_at": c["created_at"], "updated_at": c["updated_at"]}
+        from .debate import stats_from_dict  # runs saved before the scorecard existed get it computed on load
+        for r in out["runs"]:
+            if not r.get("debate") and r.get("attacks"):
+                r["debate"] = stats_from_dict(out, r)
+        return out
 
     def events(self, case_id: str, since: int = -1, limit: int = 500, types: list[str] | None = None) -> list[dict[str, Any]]:
         q, args = "SELECT * FROM events WHERE case_id=? AND seq>?", [case_id, since]

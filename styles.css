@@ -595,3 +595,7 @@ button:active:not(:disabled) { transform: scale(.98); }
   .route-chip { flex: 0 0 auto; white-space: nowrap; scroll-snap-align: start; }
   .chart-head { align-items: center; }
 }
+
+.r-revised { color: var(--cyan); background: color-mix(in srgb, var(--cyan) 12%, transparent); }
+.debate-line { flex-basis: 100%; margin: 6px 0 0; color: var(--muted); font-size: 12px; line-height: 1.7; } .debate-line b { color: var(--text); margin-right: 6px; }
+.trial-cols[data-filter="revised"] .claim[data-status="revised"] { display: block; }

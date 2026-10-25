@@ -76,7 +76,7 @@ class Attack:
 class Response:
     attack_id: str
     by: str
-    action: str  # DEFEND | CONCEDE
+    action: str  # DEFEND | REVISE | CONCEDE
     text: str
     evidence: list[Evidence] = field(default_factory=list)
     revised_estimate: Estimate | None = None
@@ -115,6 +115,7 @@ class RunRecord:
     deficiencies: list[str] = field(default_factory=list)
     unchallenged_side: str | None = None
     failures: list[str] = field(default_factory=list)
+    debate: dict[str, Any] = field(default_factory=dict)  # deterministic scorecard, see debate.py
 
 
 @dataclass

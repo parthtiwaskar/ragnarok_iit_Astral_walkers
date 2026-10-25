@@ -62,7 +62,8 @@ def _payload(first: str) -> dict[str, Any]:
     return json.loads(first.split("CASE FILE VIEW:\n", 1)[1].split("\nYOUR PRIVATE MEMORY", 1)[0])
 
 
-def make_policy(*, verified: bool = True, loki_garbage: bool = False, thor_attack_garbage: bool = False):
+def make_policy(*, verified: bool = True, loki_garbage: bool = False, thor_attack_garbage: bool = False, generic_first: bool = False,
+                loki_targets_tier1: bool = False, thor_response: str = "normal", attack_all: bool = False, concede_all: bool = False):
     def policy(system: str, messages: list[dict[str, Any]], tools: list[Any]) -> LLMResponse:
         role = re.match(r"ROLE: (\w+)", system).group(1)  # type: ignore[union-attr]
         first = messages[0]["content"]
@@ -77,7 +78,7 @@ def make_policy(*, verified: bool = True, loki_garbage: bool = False, thor_attac
             return LLMResponse(json.dumps(d))
 
         def ev(doc_id: str) -> dict[str, str]:
-            return {"doc_id": doc_id, "quote": DOCS[doc_id][2][:60], "locator": "P1"}
+            return {"doc_id": doc_id, "quote": DOCS[doc_id][2], "locator": "P1"}
 
         if role == "HEIMDALL":
             if "Open the case" in task:
@@ -128,20 +129,45 @@ def make_policy(*, verified: bool = True, loki_garbage: bool = False, thor_attac
                     claims = [{"text": "Wheat reserves cover 4 months of imports", "kind": "fact", "evidence": [ev(doc)],
                                "estimate": wheat | ({"low": 45, "high": 60} if thor else {"low": 10, "high": 20})}]
                 return out({"claims": claims})
+            retried = sum(1 for m in messages if m["role"] == "user") > 1  # the agent was re-prompted after an invalid reply
             if "Cross-examination" in task:
                 if thor and thor_attack_garbage:
                     return LLMResponse("no")
                 cl = p["opponent_claims"]
                 run = max(c["run"] for c in cl)
+                if generic_first and not retried:  # the old, vague style: must be rejected and re-prompted
+                    return out({"attacks": [{"target_claim_id": cl[0]["id"], "kind": "logic", "text": "unconvincing"}]})
                 pick = (next((c for c in cl if c["run"] == run and any(e["tier"] == 4 for e in c["evidence"])), None)
                         or next((c for c in cl if c["run"] == run), cl[0]))
-                return out({"attacks": [{"target_claim_id": pick["id"], "kind": "weak_source" if not thor else "logic",
-                                         "text": "Tier 4 source, unsourced" if not thor else "Rail capacity is finite"}]})
+                picks = cl if attack_all else [pick]
+                if not thor and loki_targets_tier1 and run == 1:
+                    picks = [next(c for c in cl if any(e["tier"] == 1 for e in c["evidence"]))]
+                atks = []
+                for c in picks:
+                    if thor:
+                        atks.append({"target_claim_id": c["id"], "kind": "scope", "counter_evidence": [ev("ORV-0001")],
+                                     "text": "Rail absorbs about 30% of displaced volume, but 62% of wheat imports came through the corridor."})
+                    else:
+                        atks.append({"target_claim_id": c["id"], "kind": "weak_source", "counter_evidence": [ev("ORV-0002")],
+                                     "text": "This claim rests on a single unconfirmed source and no official notice supports the figure."})
+                return out({"attacks": atks})
             if "You were attacked" in task:
                 resp = []
                 for a in p["attacks_against_you"]:
                     run = int(re.match(r"R(\d)", a["attack_id"]).group(1))  # type: ignore[union-attr]
-                    if thor and run == 1:
+                    tier1_fact = a["your_claim"]["kind"] == "fact" and any(e["tier"] == 1 for e in a["your_claim"]["evidence"])
+                    if concede_all:
+                        resp.append({"attack_id": a["attack_id"], "action": "CONCEDE", "text": "Conceding after the counter-evidence was shown."})
+                    elif thor and thor_response == "concede_fact" and run == 1 and tier1_fact:
+                        if not retried:
+                            resp.append({"attack_id": a["attack_id"], "action": "CONCEDE", "text": "Conceding this claim to the counter-evidence."})
+                        else:
+                            resp.append({"attack_id": a["attack_id"], "action": "DEFEND", "text": "The Tier 1 notice stands; a second document confirms it.",
+                                         "evidence": [ev("ORV-0002")]})
+                    elif thor and thor_response == "revise":
+                        resp.append({"attack_id": a["attack_id"], "action": "REVISE", "text": "Narrowing the estimate to the part the evidence supports.",
+                                     "revised_estimate": {"country": "Midgard", "sector": "wheat", "low": 50, "high": 60}})
+                    elif thor and run == 1:
                         resp.append({"attack_id": a["attack_id"], "action": "CONCEDE", "text": "Tier 4 rumour, withdrawn."})
                     elif thor:
                         resp.append({"attack_id": a["attack_id"], "action": "DEFEND", "text": "Trust me.", "evidence": []})

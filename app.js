@@ -289,11 +289,18 @@ function describeEvent(e) {
   }
 }
 
+function debateLine(d) {
+  if (!d || !d.attacks) return "";
+  const bits = [`${d.attacks} attack${d.attacks === 1 ? "" : "s"}`, `${d.specific_attack_pct}% specific`, `${d.evidence_backed_pct}% evidence-backed`, `${d.defended} defended`, `${d.revised} revised`, `${d.conceded} conceded`];
+  const warn = d.mass_concession ? '<span class="rpill r-rejected" title="Nearly every attacked claim was conceded: the debate may have agreed instead of tested">debate collapsed</span>' : d.tier12_facts_conceded?.length ? '<span class="rpill r-contested" title="A Tier 1-2 sourced fact was conceded">fact conceded</span>' : "";
+  return `<p class="debate-line"><b>Debate</b> ${bits.join(" · ")} · concession rate ${Math.round(d.concession_rate * 100)}% ${warn}</p>`;
+}
+
 const rulingPill = (status) => `<span class="rpill r-${status}">${escapeHtml(status)}</span>`;
 
 function claimCard(run, claim) {
   const ruling = run.rulings[claim.id];
-  const status = ruling?.status || (claim.status === "conceded" ? "conceded" : "unruled");
+  const status = ruling?.status || (claim.status === "conceded" ? "conceded" : claim.status === "amended" ? "revised" : "unruled");
   const est = claim.estimate ? `<span class="claim-est">${escapeHtml(claim.estimate.country)} · ${escapeHtml(claim.estimate.sector)}: <b>${fmtRange([claim.estimate.low, claim.estimate.high])}</b></span>` : "";
   const chips = [...new Map(claim.evidence.map((e) => [e.doc_id, e])).values()].slice(0, 4).map((e) => `<button class="chip-btn" data-action="open-doc" data-doc="${escapeHtml(e.doc_id)}" data-locator="${escapeHtml(e.locator)}" data-quote="${escapeHtml(e.quote)}">${escapeHtml(e.doc_id)}</button>`).join("");
   return `<article class="claim" data-status="${status}"><header><span class="claim-id">${escapeHtml(claim.id)}</span><span class="badge">${escapeHtml(claim.kind)}</span>${rulingPill(status)}</header><p class="clamp">${escapeHtml(claim.text)}</p>${claim.text.length > 260 ? '<button class="more-btn" data-action="toggle-clamp">Show more</button>' : ""}${est}<div class="cites">${chips}</div>${ruling?.rationale ? `<details class="why"><summary>Odin's reasoning</summary><p>${escapeHtml(ruling.rationale)}</p></details>` : ""}</article>`;
@@ -314,10 +321,10 @@ async function renderCouncil() {
     const attacks = Object.values(run.attacks).map((a) => {
       const r = run.responses[a.id];
       const target = run.claims[a.target_claim_id];
-      return `<div class="xexam"><div><span class="who who-${a.by.toLowerCase()}">${escapeHtml(a.by)}</span> attacked <b>${escapeHtml(a.target_claim_id)}</b> <span class="badge">${escapeHtml(a.kind)}</span><p>${escapeHtml(a.text)}</p></div><div>${r ? `<span class="rpill r-${r.action === "CONCEDE" ? "conceded" : "established"}">${r.action === "CONCEDE" ? "conceded" : "defended"}</span><p>${escapeHtml(r.text)}${r.note ? ` <i>(${escapeHtml(r.note)})</i>` : ""}</p>` : '<span class="rpill r-unruled">unanswered</span>'}${target ? "" : ""}</div></div>`;
+      return `<div class="xexam"><div><span class="who who-${a.by.toLowerCase()}">${escapeHtml(a.by)}</span> attacked <b>${escapeHtml(a.target_claim_id)}</b> <span class="badge">${escapeHtml(a.kind)}</span><p>${escapeHtml(a.text)}</p></div><div>${r ? `<span class="rpill r-${r.action === "CONCEDE" ? "conceded" : r.action === "REVISE" ? "revised" : "established"}">${r.action === "CONCEDE" ? "conceded" : r.action === "REVISE" ? "revised" : "defended"}</span><p>${escapeHtml(r.text)}${r.note ? ` <i>(${escapeHtml(r.note)})</i>` : ""}</p>` : '<span class="rpill r-unruled">unanswered</span>'}${target ? "" : ""}</div></div>`;
     }).join("");
     const flags = (run.red_flags || []).slice(0, 10).map((f) => `<span class="flag-chip" title="${escapeHtml(f.note || "")}">${escapeHtml(f.doc_id)} · ${escapeHtml(f.type)}</span>`).join("");
-    const runs = run.runs.map((r) => `<div class="run-row"><b>Run ${r.run}</b><span>${r.claims.length} claims · ${r.attacks.length} attacks · ${r.rulings.length} rulings${r.new_doc_ids.length ? ` · ${r.new_doc_ids.length} new document(s)` : ""}</span><span class="rpill r-${r.sufficient ? "established" : r.sufficient === false ? "contested" : "unruled"}">${r.sufficient ? "sufficient" : r.sufficient === false ? "sent back" : "not judged"}</span>${r.deficiencies.length ? `<ul>${r.deficiencies.map((d) => `<li>${escapeHtml(d)}</li>`).join("")}</ul>` : ""}${r.failures.length ? `<p class="rating-note">${escapeHtml(friendlyReason(r.failures))}</p>` : ""}</div>`).join("");
+    const runs = run.runs.map((r) => `<div class="run-row"><b>Run ${r.run}</b><span>${r.claims.length} claims · ${r.attacks.length} attacks · ${r.rulings.length} rulings${r.new_doc_ids.length ? ` · ${r.new_doc_ids.length} new document(s)` : ""}</span><span class="rpill r-${r.sufficient ? "established" : r.sufficient === false ? "contested" : "unruled"}">${r.sufficient ? "sufficient" : r.sufficient === false ? "sent back" : "not judged"}</span>${r.deficiencies.length ? `<ul>${r.deficiencies.map((d) => `<li>${escapeHtml(d)}</li>`).join("")}</ul>` : ""}${r.failures.length ? `<p class="rating-note">${escapeHtml(friendlyReason(r.failures))}</p>` : ""}${debateLine(r.debate)}</div>`).join("");
     content.innerHTML = `
       <section class="page-heading">
         <div><div class="eyebrow"><span class="live-dot"></span> INTELLIGENCE <span class="eyebrow-divider">/</span> ADVERSARIAL REVIEW</div><h1>Agent council</h1><p class="page-subtitle">${escapeHtml(run.question)}</p></div>
@@ -512,7 +519,7 @@ function downloadBriefing() {
 // ---- charts -----------------------------------------------------------------------
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const COLORS = { cyan: "#67ddf4", amber: "#ffca82", violet: "#b29aff", green: "#60ddb1", rose: "#ff8f9d", grey: "#5e6d83", orange: "#ff9f6b" };
-const STATUS_COLORS = { established: COLORS.green, contested: COLORS.amber, conceded: COLORS.violet, rejected: COLORS.rose, unruled: COLORS.grey };
+const STATUS_COLORS = { established: COLORS.green, contested: COLORS.amber, conceded: COLORS.violet, rejected: COLORS.rose, revised: COLORS.cyan, unruled: COLORS.grey };
 const nfmt = new Intl.NumberFormat("en-GB");
 state.charts = [];
 const track = (chart) => { state.charts.push(chart); return chart; };
@@ -659,7 +666,7 @@ async function renderDocTimeline(root) {
 
 function statusBars(run) {
   const claims = Object.values(run.claims);
-  const status = (c) => run.rulings[c.id]?.status || (c.status === "conceded" ? "conceded" : "unruled");
+  const status = (c) => run.rulings[c.id]?.status || (c.status === "conceded" ? "conceded" : c.status === "amended" ? "revised" : "unruled");
   const row = (side, label) => {
     const counts = {};
     claims.filter((c) => c.side === side).forEach((c) => { const s = status(c); counts[s] = (counts[s] || 0) + 1; });

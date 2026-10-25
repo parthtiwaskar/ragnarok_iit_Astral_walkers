@@ -34,6 +34,13 @@ environment or a gitignored `.env` in the repo root. Keys are never sent to the 
 The dashboard draws its charts with plain SVG (`charts.js`, no dependencies): monthly trade flows with a year-on-year overlay
 (from `/api/trade`), Thor/Loki/Odin range comparison, a source timeline by month and tier, and claim status bars.
 
+## Debate quality
+Cross-examination is held to rules, not just prompts (`debate.py`, enforced in `agents/advocates.py`): every attack needs a specific
+kind, an explanation and verified, relevant counter-evidence; a concession must say what was refuted, a Tier 1-2 sourced fact is not
+conceded to weaker evidence without a warning, and a side can REVISE (narrow) a claim instead of dropping it. Each run gets a
+deterministic scorecard (specific / evidence-backed attacks, defended / revised / conceded, concession rate). A collapsed debate
+(>=70% of attacked claims conceded) is flagged to Odin and sends the case back.
+
 Layout: `models.py` Case File · `tools.py` tool catalogue, allowlists, limits, guard chain · `agents/` the four agents and
 prompts · `thing.py` orchestrator · `briefing.py` digest + renderer · `memory.py` per-agent private memory ·
 `corpus.py` ingestion into SQLite + tools · `store.py` cases/claims/rulings/events tables · `server.py` API + dashboard · `embed.py` embedders for semantic search · `env.py` .env loader · `llm.py` Anthropic / OpenAI-compatible clients + `FakeLLM`.

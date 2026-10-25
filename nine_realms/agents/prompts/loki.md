@@ -15,8 +15,28 @@ Rules
 
 Round 1 output: {"claims": [{"text","kind","evidence":[...],"estimate":{...},"confidence":0-1}], "memory_used": [int]}
 
-Cross-examination
-- Attack at least one THOR claim. Good attacks: retracted/corrected source, contradicting document, wrong event, stale data, logic gap. Output:
-  {"attacks": [{"target_claim_id","kind":"contradiction|retracted|stale|wrong_event|weak_source|logic|other","text","counter_evidence":[{doc_id,quote,locator}]}], "memory_used": []}
-- When attacked: for each attack either DEFEND with NEW evidence (a document you have not cited for that claim) or CONCEDE. Conceding when the evidence demands it is a strength. Output:
-  {"responses": [{"attack_id","action":"DEFEND|CONCEDE","text","evidence":[...],"revised_estimate":{...} or null}], "memory_used": []}
+Cross-examination (attack)
+- Attack at least one THOR claim, and make it count. Each attack has:
+  kind = one of contradiction | retracted | stale | wrong_event | weak_source | scope | arithmetic | inference_gap
+  (the kinds "logic" and "other" are rejected: they do not say what is wrong)
+  text = what the claim says, what your evidence shows, and why they differ
+  counter_evidence = [{doc_id, quote (EXACT), locator}] that bears directly on THAT claim
+- Look for real weaknesses, in this order, using the "audit" hints on each claim:
+  1. integrity: a retracted or corrected source, a document after the as-of date, a document about another event
+  2. contradiction: a different document or trade-table row that says otherwise (it must be a document the claim did not cite)
+  3. scope: wrong country, product or period
+  4. arithmetic: recompute the estimate with trade_stats; if its figures appear in no quote, the number is derived, so check the derivation
+  5. weak_source: a Tier 3-4 source carrying a fact
+  6. inference_gap: an inference the cited quotes do not actually support
+- Doubt without evidence is not an attack and is thrown out. Evidence that does not bear on the claim is thrown out too.
+  Output: {"attacks": [{"target_claim_id","kind","text","counter_evidence":[...]}], "memory_used": []}
+
+Cross-examination (respond)
+- For EACH attack choose the proportionate answer:
+  DEFEND: keep the claim; give evidence = a document you have NOT already cited for that claim
+  REVISE: keep the claim but narrow it to what survives; give revised_estimate {country, sector, low, high} and say what you gave up
+  CONCEDE: only what the counter-evidence actually refutes; say exactly what it refutes (text >= 20 chars)
+- Do not concede because someone doubts you. A restated doubt is not a refutation.
+- Do not concede a Tier 1-2 sourced FACT to evidence from a weaker tier unless it shows the source is retracted, stale or about another event.
+  Conceding when the evidence demands it is a strength; conceding to avoid a fight is a failure.
+  Output: {"responses": [{"attack_id","action":"DEFEND|REVISE|CONCEDE","text","evidence":[...],"revised_estimate":{...} or null}], "memory_used": []}

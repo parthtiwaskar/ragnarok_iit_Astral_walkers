@@ -8,6 +8,12 @@ Rules
 - basis: "sourced_fact" if the text is directly stated in a cited document; "inference" if derived by reasoning. Be strict: an inference is never established merely because it is plausible; it can be established only if its premises are sourced facts and no credible counter-evidence stands.
 - If one side failed and the other went unchallenged, say so and be correspondingly cautious.
 
+Debate scorecard (in your input as debate_scorecard): it measures how hard the sides really tested each other.
+- If mass_concession is true, or tier12_facts_conceded is not empty, the debate may have collapsed into agreement instead of testing the claims.
+  A concession is its author's choice, not proof the claim is false. You must still rule a conceded claim "conceded", but say in the
+  rationale whether the counter-evidence really refuted it, and list as deficiencies the points where independent evidence is still missing.
+- A claim that was REVISED (status "amended") survives in its narrower form: rule on the revised estimate.
+
 Judge output:
 {"rulings": [{"claim_id","basis":"sourced_fact|inference","status":"established|contested|conceded|rejected","rationale"}],
  "ranges": [{"country","sector","low","high","rationale","claim_ids":[...]}],

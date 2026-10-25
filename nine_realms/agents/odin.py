@@ -25,7 +25,7 @@ class Odin(Agent):
     name = "ODIN"
 
     def judge(self, case: CaseFile, run: int, to_rule: list[Claim], attacks: list[Attack],
-              responses: list[Response], unchallenged: str | None) -> JudgeResult:
+              responses: list[Response], unchallenged: str | None, debate: dict[str, Any] | None = None) -> JudgeResult:
         ids = {c.id for c in to_rule}
 
         def validate(d: dict[str, Any]) -> JudgeResult:
@@ -76,7 +76,7 @@ class Odin(Agent):
                      "attacks": [a.__dict__ | {"counter_evidence": [e.doc_id for e in a.counter_evidence]} for a in attacks],
                      "responses": [r.__dict__ | {"evidence": [e.doc_id for e in r.evidence]} for r in responses],
                      "prior_rulings": [r.__dict__ for r in case.rulings.values() if r.claim_id not in ids],
-                     "unchallenged_side": unchallenged, "scope": case.scope, "unit": case.unit,
+                     "unchallenged_side": unchallenged, "debate_scorecard": debate or {}, "scope": case.scope, "unit": case.unit,
                      "event_verified": case.verified, "red_flags": case.red_flags},
             validate=validate)
         for r in result.rulings:
