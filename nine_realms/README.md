@@ -26,9 +26,12 @@ Embedder: `fastembed` bge-small (384-d, downloaded once into `data/models/`) whe
 n-gram embedder, so search works offline. Force one with `NINE_REALMS_EMBEDDER=hash|fastembed`.
 
 ## Keys
-`python -m nine_realms.server` and `run_e5.py` read `ANTHROPIC_API_KEY` / `GROQ_API_KEY` (and `GROQ_MODEL`) from the
-environment or a gitignored `.env` in the repo root. Keys are never sent to the browser. Groq's free tier is too small
-(daily token cap, weak JSON discipline on the 20b model) to complete a trial; use Anthropic.
+`python -m nine_realms.server` reads `DEEPSEEK_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` (plus `OPENAI_BASE_URL` for
+OpenRouter or another OpenAI-compatible gateway) or `GROQ_API_KEY` from the environment or a gitignored `.env` in the repo root.
+With `NINE_REALMS_PROVIDER` empty, the first key set wins in that order, so after swapping keys either delete the stale one or
+set `NINE_REALMS_PROVIDER=deepseek|anthropic|openai|groq`. The startup line prints the chosen provider, model and the reason.
+Keys are never sent to the browser. `run_e5.py` supports `anthropic` and `groq` only. Groq's free tier is too small (daily
+token cap, weak JSON discipline on the 20b model) to complete a trial.
 
 ## Charts
 The dashboard draws its charts with plain SVG (`charts.js`, no dependencies): monthly trade flows with a year-on-year overlay

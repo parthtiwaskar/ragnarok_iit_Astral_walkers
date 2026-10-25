@@ -9,10 +9,16 @@ Copy `deploy/.env.example` to `deploy/.env` and fill it in. The ones that matter
 | Variable | Required | What it is |
 |---|---|---|
 | `APP_ACCESS_TOKEN` | **yes** | Password for the dashboard API. Generate: `python -c "import secrets;print(secrets.token_urlsafe(32))"`. The server refuses to start on a public address without it. |
-| `ANTHROPIC_API_KEY` | one of these two | Needed to run new trials (https://console.anthropic.com). Recommended. |
-| `GROQ_API_KEY` | | Alternative provider (https://console.groq.com). Its free tier is too small to finish a full trial. |
-| `NINE_REALMS_PROVIDER` | no | `anthropic` or `groq`; empty picks whichever key is set. |
-| `ANTHROPIC_MODEL` / `GROQ_MODEL` | no | Defaults `claude-sonnet-5-5` / `openai/gpt-oss-120b`. |
+| `DEEPSEEK_API_KEY` | one LLM key | Cheapest provider (https://platform.deepseek.com), OpenAI-compatible. |
+| `ANTHROPIC_API_KEY` | | https://console.anthropic.com. Strongest results. |
+| `OPENAI_API_KEY` | | OpenAI, or any OpenAI-compatible gateway such as OpenRouter (set `OPENAI_BASE_URL=https://openrouter.ai/api/v1`). |
+| `GROQ_API_KEY` | | https://console.groq.com. Its free tier is too small to finish a full trial. |
+| `NINE_REALMS_PROVIDER` | no | `deepseek`, `anthropic`, `openai` or `groq`. Empty = the first key set, in that order. |
+| `DEEPSEEK_MODEL` / `ANTHROPIC_MODEL` / `NINE_REALMS_OPENAI_MODEL` / `GROQ_MODEL` | no | Defaults `deepseek-chat` / `claude-sonnet-5-5` / `gpt-4.1-mini` (`openai/gpt-4.1-mini` on OpenRouter) / `openai/gpt-oss-120b`. |
+
+**Swapping keys:** auto-detection takes the first key that is *set*, whether or not it still works. After replacing a key, delete the
+old one or set `NINE_REALMS_PROVIDER`. On start the server prints the provider and model it chose, and why; `/api/health` (with the
+token) reports them too.
 | `MAX_TRIALS_PER_DAY`, `TRIAL_COOLDOWN_SECONDS` | no | Spending caps (defaults 20 per UTC day, 30 s per client). |
 | `MAX_LLM_CALLS`, `MAX_CASE_TOKENS` | no | Per-trial caps (defaults 150 calls, 1,000,000 tokens). |
 | `ALLOWED_ORIGINS` | no | Extra browser origins allowed to POST (the same host always is). |
