@@ -26,6 +26,7 @@ services:
     volumes:
       - ragnarisk-data:/data
     restart: unless-stopped
+    user: "10001:10001"   # already unprivileged, so the entrypoint skips its root-only disk fix
     read_only: true
     tmpfs:
       - /tmp

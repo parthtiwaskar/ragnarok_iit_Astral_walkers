@@ -21,13 +21,14 @@ COPY index.html app.js charts.js styles.css ./
 COPY ${PACK_DIR} ./pack
 COPY runs ./runs
 
-# Run as an unprivileged user. /data is the only place the app writes (database + agent memory).
+# The app runs as an unprivileged user (uid 10001). /data is the only place it writes (database + agent memory).
+# The entrypoint starts as root only to fix ownership of a freshly mounted disk, then drops to that user.
 RUN useradd --create-home --uid 10001 app && mkdir -p /data /models && chown -R app:app /data /models /app
-USER app
+COPY --chmod=755 deploy/entrypoint.sh /entrypoint.sh
 VOLUME ["/data"]
 EXPOSE 8765
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=120s --retries=3 \
   CMD python -c "import os,urllib.request;urllib.request.urlopen('http://127.0.0.1:'+os.environ.get('PORT','8765')+'/api/health',timeout=4)"
 
-ENTRYPOINT ["python", "-m", "nine_realms.server"]
+ENTRYPOINT ["/entrypoint.sh"]

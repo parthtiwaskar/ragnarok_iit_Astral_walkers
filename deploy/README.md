@@ -38,10 +38,24 @@ The image bakes in the embedding model, runs as an unprivileged user with a read
 The server speaks plain HTTP. Terminate HTTPS with a reverse proxy or your platform, forward `X-Forwarded-Proto` and `X-Forwarded-For`, and set `TRUST_PROXY=1`.
 Example (Caddy): `ragnarisk.example.com { reverse_proxy localhost:8765 }`.
 
-## 3b. Hosted platforms (Render, Railway, Fly, ...)
+## 3b. Render (render.yaml)
 
-Deploy `deploy/Dockerfile` (build context = repository root), set the variables above in the platform's secret store, attach a persistent disk at `/data`,
-and use `/api/health` as the health check. Run a single instance: the database is SQLite and trials run one at a time per process.
+`render.yaml` at the repository root is a Render Blueprint. It builds `deploy/Dockerfile`, mounts a 1 GB disk at `/data`, health-checks `/api/health`,
+and generates `APP_ACCESS_TOKEN` for you.
+
+1. Push the repository (it must contain `render.yaml`) to GitHub.
+2. Render dashboard > **New > Blueprint** > connect GitHub > pick this repository > **Apply**.
+3. When asked, paste `ANTHROPIC_API_KEY` (or leave it empty and add it later under **Environment**). Browsing works without it.
+4. Wait for the build (a few minutes; the first start embeds the corpus once). Open the service URL.
+5. The dashboard asks for an access token: copy `APP_ACCESS_TOKEN` from the service's **Environment** tab.
+
+Plan and memory: the default is `starter` (512 MB) with `NINE_REALMS_EMBEDDER=hash` (about 35 MB of RAM; word search plus fuzzy matching).
+For full semantic search (bge-small, about 1 GB RAM) switch the plan to `standard` (2 GB) and set `NINE_REALMS_EMBEDDER=auto`.
+Persistent disks need a paid plan: on the free plan the data is lost on every restart and the service sleeps when idle.
+Run a single instance: the database is SQLite and trials run one at a time per process.
+
+Why the entrypoint: Render mounts the disk owned by root. The container starts as root only to fix that ownership, then drops to an
+unprivileged user (uid 10001) before running the app. `docker compose` already starts unprivileged and skips this step.
 
 ## 4. Operations
 

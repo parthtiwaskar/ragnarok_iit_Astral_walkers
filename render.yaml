@@ -1,0 +1,39 @@
+# Render Blueprint. Render dashboard > New > Blueprint > pick this repository > Apply.
+# Builds deploy/Dockerfile from the repo root. Secrets marked "sync: false" are asked for in the dashboard, never stored in git.
+services:
+  - type: web
+    name: ragnarisk
+    runtime: docker
+    branch: main
+    dockerfilePath: ./deploy/Dockerfile
+    dockerContext: .
+    # starter (512 MB RAM) is enough with the lightweight embedder set below. For full semantic search (bge-small, ~1 GB RAM)
+    # use `standard` (2 GB) and change NINE_REALMS_EMBEDDER to auto. Persistent disks need a paid plan.
+    plan: starter
+    healthCheckPath: /api/health
+    autoDeploy: false          # deploy on demand, so a teammate's push to main cannot trigger a surprise rebuild
+    disk:
+      name: ragnarisk-data     # SQLite database + agent memory
+      mountPath: /data
+      sizeGB: 1
+    envVars:
+      - key: NINE_REALMS_ENV
+        value: production
+      - key: TRUST_PROXY       # Render terminates TLS and forwards the real client address
+        value: "1"
+      - key: APP_ACCESS_TOKEN  # generated for you: read it in Render > Environment, and type it into the dashboard
+        generateValue: true
+      - key: ANTHROPIC_API_KEY # needed only to start new trials; browsing works without it
+        sync: false
+      - key: GROQ_API_KEY      # optional alternative provider
+        sync: false
+      - key: ANTHROPIC_MODEL
+        value: claude-sonnet-5-5
+      - key: NINE_REALMS_EMBEDDER
+        value: hash            # auto = real semantic search, needs the standard plan
+      - key: MAX_TRIALS_PER_DAY
+        value: "10"
+      - key: TRIAL_COOLDOWN_SECONDS
+        value: "60"
+      - key: LOG_LEVEL
+        value: info
