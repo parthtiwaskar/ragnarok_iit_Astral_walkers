@@ -24,6 +24,7 @@ class Embedder(Protocol):
     name: str
     dim: int
     min_score: float  # cosine below this is treated as "no semantic match"
+    margin: float  # ...and so is anything this far below the best hit
 
     def encode_docs(self, texts: list[str]) -> list[array]: ...
     def encode_query(self, text: str) -> array: ...
@@ -45,6 +46,7 @@ class HashEmbedder:
     name = "hash-ngram-512"
     dim = 512
     min_score = 0.12
+    margin = 0.15  # semantic hits must be within this cosine of the best hit
 
     def _vec(self, text: str) -> array:
         v = [0.0] * self.dim
@@ -65,7 +67,8 @@ class HashEmbedder:
 
 class FastEmbedder:
     dim = 384
-    min_score = 0.45
+    min_score = 0.58  # measured on the E5 pack: unrelated queries top out at ~0.48-0.54, genuine ones at 0.75-0.80
+    margin = 0.10
 
     def __init__(self, model: str | None = None) -> None:
         from fastembed import TextEmbedding  # optional dependency

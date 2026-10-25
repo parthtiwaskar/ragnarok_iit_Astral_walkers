@@ -538,3 +538,7 @@ button:active:not(:disabled) { transform: scale(.98); }
   .toast { bottom: 78px; }
   .live-strip { flex-direction: column; gap: 8px; }
 }
+@media (max-width: 650px) {
+  .nav-text { font-size: 0; }
+  .nav-text::after { content: attr(data-short); font-size: 10.5px; letter-spacing: .01em; }
+}

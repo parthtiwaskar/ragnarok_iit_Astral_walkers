@@ -54,6 +54,9 @@ CREATE TABLE IF NOT EXISTS trade_rows(doc_id TEXT, para INTEGER, route_from TEXT
 """
 
 
+_STOP = frozenset("a an and are as at be been but by do does did for from had has have how i if in into is it its of on or so than that the their them then there these they this those to was were what when where which who why will with would about after before over under can could should may might not no".split())
+
+
 def _tok(s: str) -> list[str]:
     return _TOKEN.findall(s.lower())
 
@@ -374,7 +377,7 @@ class LocalCorpus:
                     or (tier_max is not None and d["tier"] > int(tier_max)) or (date_from and d["date"] < date_from) or (date_to and d["date"] > date_to))
             return memo[doc_id]
 
-        toks = list(dict.fromkeys(_tok(query)))
+        toks = [t for t in dict.fromkeys(_tok(query)) if t not in _STOP] or list(dict.fromkeys(_tok(query)))  # drop filler words
         if not toks:
             return {"results": [], "note": "empty query"}
         lex: dict[str, tuple[float, int]] = {}
@@ -391,6 +394,9 @@ class LocalCorpus:
                     c = dot(q, vec)
                     if c >= self.embedder.min_score and c > sem.get(doc_id, (-1.0, 0))[0]:
                         sem[doc_id] = (c, idx)
+            if sem:  # keep only hits close to the best one: in a single-topic corpus the absolute floor alone lets almost everything through
+                top = max(v[0] for v in sem.values())
+                sem = {d: v for d, v in sem.items() if v[0] >= top - self.embedder.margin}
             sem = dict(sorted(sem.items(), key=lambda kv: -kv[1][0])[:30])
         lex_rank = {d: i for i, (d, _) in enumerate(sorted(lex.items(), key=lambda kv: -kv[1][0]))}
         sem_rank = {d: i for i, (d, _) in enumerate(sorted(sem.items(), key=lambda kv: -kv[1][0]))}
