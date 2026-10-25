@@ -4,10 +4,39 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from datetime import date
 
 CORR_TYPES = {"correction", "corrections", "clarification", "erratum"}
 RETR_TYPES = {"retraction", "retractions", "withdrawal"}
-DATE_RX = re.compile(r"\b(\d{4}-\d{2}-\d{2})\b")
+ISO_DATE = re.compile(r"\b(\d{4}-\d{2}-\d{2})\b")
+_MONTHS = [
+    "january",
+    "february",
+    "march",
+    "april",
+    "may",
+    "june",
+    "july",
+    "august",
+    "september",
+    "october",
+    "november",
+    "december",
+]
+NATURAL_DATE = re.compile(
+    r"\b(\d{1,2})\s+("
+    + "|".join(_MONTHS)
+    + r")(?:\s+(\d{4}))?\b|\b("
+    + "|".join(_MONTHS)
+    + r")\s+(\d{1,2})(?:,?\s+(\d{4}))?\b",
+    re.IGNORECASE,
+)
+# a "correction" that says the original story was wrong in substance withdraws it
+WITHDRAWN = re.compile(
+    r"\b(?:report|story|article)\s+was\s+(?:wrong|false|incorrect|untrue)\b|should not be relied on|"
+    r"removed the (?:report|story|article)|we (?:retract|withdraw)|did not happen|has been withdrawn",
+    re.IGNORECASE,
+)
 DENIAL_RX = re.compile(
     r"(?:reports?|claims?|rumou?rs?)[^.]{0,120}\b(?:are|is|were|was)\s+(?:false|untrue|unfounded|baseless|incorrect)"
     r"|no (?:closure|ban|strike|attack|blockade|incident) has (?:taken place|occurred|happened)"
@@ -15,6 +44,7 @@ DENIAL_RX = re.compile(
     r"|remains? open to all traffic",
     re.IGNORECASE,
 )
+WORD = re.compile(r"[a-z]{4,}")
 
 
 @dataclass
@@ -42,8 +72,39 @@ def classify_kind(source_type: str | None, title: str | None, body: str) -> str 
     if st in RETR_TYPES or head.startswith("retraction") or re.match(r"^(?:\S+\s){0,3}retracts?\b", head):
         return "retracts"
     if st in CORR_TYPES or head.startswith(("correction", "clarification")):
-        return "corrects"
+        return "retracts" if WITHDRAWN.search(body) else "corrects"
     return None
+
+
+def referenced_dates(body: str, pub_date: str) -> set[str]:
+    """ISO dates and natural ones ('On 9 September we reported'); a missing year is the latest before pub_date."""
+    out = set(ISO_DATE.findall(body))
+    try:
+        pub = date.fromisoformat(pub_date)
+    except ValueError:
+        return out
+    for m in NATURAL_DATE.finditer(body):
+        if m.group(1):
+            day, month, year = int(m.group(1)), m.group(2), m.group(3)
+        else:
+            day, month, year = int(m.group(5)), m.group(4), m.group(6)
+        mon = _MONTHS.index(month.lower()) + 1
+        y = int(year) if year else pub.year
+        try:
+            d = date(y, mon, day)
+        except ValueError:
+            continue
+        if not year and d > pub:
+            try:
+                d = date(y - 1, mon, day)
+            except ValueError:
+                continue
+        out.add(d.isoformat())
+    return out
+
+
+def _overlap(a: str, b: str) -> int:
+    return len(set(WORD.findall(a.lower())) & set(WORD.findall(b.lower())))
 
 
 def find_relations(
@@ -65,13 +126,20 @@ def find_relations(
         refs = {m.group(0) for m in id_rx.finditer(body)} - {doc_id}
         refs = {r for r in refs if r in known}
         if not refs:
-            # fall back to headline/date references: same outlet, a date mentioned in the text, earlier pub date
-            dates = set(DATE_RX.findall(body))
-            for other, meta in known.items():
-                if other == doc_id:
-                    continue
-                if meta.get("outlet") == outlet and meta.get("pub_date") in dates:
-                    refs.add(other)
+            # headline/date references: same outlet, a date the text mentions, published no later than this doc
+            dates = referenced_dates(body, pub_date)
+            cands = [
+                other
+                for other, meta in known.items()
+                if other != doc_id
+                and meta.get("outlet") == outlet
+                and meta.get("pub_date") in dates
+                and (meta.get("pub_date") or "") <= pub_date
+            ]
+            if cands:
+                text = f"{title or ''} {body}"
+                best = max(cands, key=lambda o: (_overlap(text, str(known[o].get("title") or "")), o))
+                refs = {best}
         for r in sorted(refs):
             out.append(Relation(doc_id, r, kind, pub_date))
     if tier is not None and tier <= 2 and event_id and DENIAL_RX.search(body):

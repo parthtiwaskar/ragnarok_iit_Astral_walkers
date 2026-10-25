@@ -3,15 +3,39 @@
 from __future__ import annotations
 
 from app.ingest.parsers import Extracted
+from app.ingest.sniff import utf16_split
 from app.ingest.text import mojibake_score, normalize
+
+
+def _split_mixed_encoding(data: bytes) -> tuple[str, str] | None:
+    """A UTF-8 prefix followed by a UTF-16 run partway in: decode each half separately.
+
+    Decoding the whole file either way loses one half, so split at the boundary `utf16_split`
+    found. Falls back to the normal path if either half does not decode.
+    """
+    found = utf16_split(data)
+    if found is None:
+        return None
+    at, encoding = found
+    try:
+        head = data[:at].decode("utf-8")
+        tail = data[at + 2 :].decode(encoding)
+    except UnicodeDecodeError:
+        return None
+    return head + tail, f"MIXED_ENCODING: {encoding} body after a utf-8 header"
 
 
 def extract_txt(data: bytes, keep_spacing: bool = False) -> Extracted:
     repaired = False
     notes: list[str] = []
     text: str | None = None
+    mixed = _split_mixed_encoding(data) if b"\x00" in data else None
+    if mixed is not None:
+        text, note = mixed
+        repaired = True
+        notes.append(note)
     try:
-        text = data.decode("utf-8")
+        text = data.decode("utf-8") if text is None else text
     except UnicodeDecodeError:
         try:
             from charset_normalizer import from_bytes

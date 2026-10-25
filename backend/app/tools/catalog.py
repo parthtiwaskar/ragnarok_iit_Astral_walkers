@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 from app.search.filters import SearchFilters
 from app.search.fts import normalize_query
 from app.tools import exposure as exp
-from app.tools.asof import as_of_status, doc_visible, month_visible, relation_visible
+from app.tools.asof import as_of_status, doc_visible, month_visible, relation_visible, table_visible
 from app.tools.citation import EvidenceIn, HydrationError, hydrate, verify_citation
 from app.tools.event_tools import event_profile, list_events
 from app.tools.registry import ToolDef
@@ -275,7 +275,7 @@ def t_event_profile(ctx: CaseContext, call: CallCtx, a: EventProfileArgs) -> dic
 
 def t_list_tables(ctx: CaseContext, call: CallCtx, a: ListTablesArgs) -> dict[str, Any]:
     repo = ctx.services.repo
-    tables = tables_for(repo, a.event_id, a.country, a.sector)
+    tables = tables_for(repo, a.event_id, a.country, a.sector, ctx.clock)
     res = [table_summary(repo, t, ctx.clock) for t in tables]
     return {"tables": res, "note": None if res else "no trade tables match these filters"}
 
@@ -285,6 +285,17 @@ def t_read_table(ctx: CaseContext, call: CallCtx, a: ReadTableArgs) -> dict[str,
     t = repo.get_trade_table(a.table_id)
     if t is None:
         return {"error": "NOT_FOUND", "message": f"no trade table {a.table_id}", "retryable": False}
+    if not table_visible(t, repo, ctx.clock):
+        ctx.emit(
+            "as_of_block",
+            "tool",
+            {"ref": a.table_id, "reason": "source document dated after as-of", "agent": call.agent},
+        )
+        return {
+            "error": "NOT_AVAILABLE_AS_OF",
+            "message": "This table is published after the case as-of date.",
+            "retryable": False,
+        }
     rows = repo.trade_rows(a.table_id)
     out_rows = []
     hidden = 0
@@ -347,13 +358,56 @@ def t_reference(ctx: CaseContext, call: CallCtx, a: RefArgs) -> dict[str, Any]:
     sheet = a.sheet.strip().lower()
     rows = ctx.services.repo.reference(sheet, a.key)
     if not rows and not sheet.endswith("s"):
-        rows = ctx.services.repo.reference(sheet + "s", a.key)
+        sheet = sheet + "s"
+        rows = ctx.services.repo.reference(sheet, a.key)
+    derived = False
+    if not rows and sheet in ("countries", "sectors", "outlets"):
+        rows = derived_reference(ctx, sheet, a.key)
+        derived = bool(rows)
     return {
         "sheet": sheet,
         "rows": [{k: v for k, v in r.items() if k != "_sheet"} for r in rows],
         "available_sheets": ctx.services.repo.reference_sheets(),
-        "note": None if rows else "no rows for this sheet/key",
+        "derived": derived,
+        "note": (
+            "no reference sheet in this corpus: rows derived from visible document metadata and trade "
+            "notes; read the atlas/explainer documents for details"
+        )
+        if derived
+        else (None if rows else "no rows for this sheet/key"),
     }
+
+
+def derived_reference(ctx: CaseContext, sheet: str, key: str | None) -> list[dict[str, Any]]:
+    """Countries, sectors and outlets seen in visible documents and trade tables (deterministic)."""
+    repo = ctx.services.repo
+    docs = [d for d in repo.docs("status NOT IN ('QUARANTINED','MISSING')") if doc_visible(d, ctx.clock)]
+    tables = tables_for(repo, clock=ctx.clock)
+    names: dict[str, dict[str, Any]] = {}
+    if sheet == "countries":
+        for d in docs:
+            for c in d.countries:
+                names.setdefault(c, {"name": c})
+        for tb in tables:
+            for party in (tb.exporter, tb.importer):
+                if party:
+                    names.setdefault(party, {"name": party})
+    elif sheet == "sectors":
+        for d in docs:
+            for s in d.sectors:
+                if s and s != "general":
+                    names.setdefault(s, {"name": s})
+        for tb in tables:
+            if tb.sector:
+                names.setdefault(tb.sector, {"name": tb.sector})
+    else:
+        for d in docs:
+            if d.outlet:
+                names.setdefault(d.outlet, {"name": d.outlet, "tier": d.tier, "type": d.source_type})
+    rows = sorted(names.values(), key=lambda r: str(r["name"]))
+    if key:
+        rows = [r for r in rows if str(r["name"]).lower() == key.lower()]
+    return rows
 
 
 def t_compute(ctx: CaseContext, call: CallCtx, a: ComputeArgs) -> dict[str, Any]:

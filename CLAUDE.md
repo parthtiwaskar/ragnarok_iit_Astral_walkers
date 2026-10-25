@@ -48,7 +48,7 @@ Breaking any of these fails the hackathon. Every PR must keep them true, and mos
 
 ## 3. Stack and conventions
 
-**Backend:** Python 3.11+, FastAPI, pydantic v2, SQLite (WAL, FTS5), fastembed, numpy, PyMuPDF, python-docx, charset-normalizer, ftfy, rapidfuzz, watchdog, sse-starlette, structlog, tenacity, `openai`, `anthropic`.
+**Backend** (deps in `backend/pyproject.toml`): SQLite in WAL mode with FTS5.
 - Type hints everywhere. `ruff` + `ruff format`. `mypy --strict` on `trial/`, `tools/`, `memory/`.
 - Async for the agent and LLM paths. Sync is fine inside ingestion workers.
 - Config via `.env` → `config.py` (`pydantic-settings`). **Never hard-code API keys**: the submission requires `.env.example`, and keys must not reach the public repo.

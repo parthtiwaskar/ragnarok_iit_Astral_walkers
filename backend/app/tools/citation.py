@@ -14,7 +14,7 @@ from rapidfuzz import fuzz
 
 from app.ingest.text import norm_for_match
 from app.store.repo import Repo
-from app.tools.asof import Clock, as_of_status, doc_visible, month_visible
+from app.tools.asof import Clock, as_of_status, doc_visible, month_visible, table_visible
 from app.trial.casefile import (
     WARNING_ISSUES,
     CitationCheck,
@@ -23,6 +23,42 @@ from app.trial.casefile import (
     Evidence,
     TradeEvidence,
 )
+
+# [DOC_ID, YYYY-MM-DD] | [DOC_ID P3, YYYY-MM-DD] | [TABLE_ID r08, YYYY-MM]
+CITE_RX = re.compile(
+    r"\[(?P<ref>[A-Za-z0-9_\-]+)(?: (?P<para>P\d+)| r(?P<row>\d+))?, (?P<date>\d{4}-\d{2}(?:-\d{2})?)\]"
+)
+PARA_RX = re.compile(r"\[P(\d+)\]")
+
+
+def normalize_cite(m: re.Match[str]) -> str:
+    ref, para, row, d = m.group("ref"), m.group("para"), m.group("row"), m.group("date")
+    if row:
+        return f"[{ref} r{int(row):02d}, {d}]"
+    return f"[{ref} {para}, {d}]" if para else f"[{ref}, {d}]"
+
+
+def cite_ref(c: str) -> str | None:
+    """'[ORV-0009 r03, 2026-09]' -> 'ORV-0009#r03'; '[ORV-0016 P1, 2026-09-10]' -> 'ORV-0016'."""
+    m = CITE_RX.search(c)
+    if not m:
+        return None
+    return f"{m.group('ref')}#r{int(m.group('row')):02d}" if m.group("row") else m.group("ref")
+
+
+def paragraph_of(body: str, quote: str, min_score: float = 80) -> str | None:
+    """The [P#] paragraph that holds the quote, when the document uses paragraph anchors."""
+    marks = list(PARA_RX.finditer(body))
+    if not marks or not quote.strip():
+        return None
+    needle = norm_for_match(quote)
+    best: tuple[float, str | None] = (0.0, None)
+    for i, m in enumerate(marks):
+        seg = body[m.end() : marks[i + 1].start() if i + 1 < len(marks) else len(body)]
+        score = float(fuzz.partial_ratio(needle, norm_for_match(seg)))
+        if score > best[0]:
+            best = (score, f"P{m.group(1)}")
+    return best[1] if best[0] >= min_score else None
 
 
 class EvidenceIn(BaseModel):
@@ -57,10 +93,13 @@ def hydrate(ev: EvidenceIn, repo: Repo, clock: Clock) -> Evidence:
             table_id, row = parsed
         else:
             row = ev.row
-        if repo.get_trade_table(table_id) is None:
+        table = repo.get_trade_table(table_id)
+        if table is None:
             raise HydrationError(
                 f"trade table {table_id} not found; copy table ids exactly from tool results"
             )
+        if not table_visible(table, repo, clock):
+            raise HydrationError(f"trade table {table_id} is not available as of {clock.iso}")
         r = repo.trade_row(table_id, row)
         if r is None:
             raise HydrationError(f"row {row} not found in {table_id}")
@@ -80,6 +119,7 @@ def hydrate(ev: EvidenceIn, repo: Repo, clock: Clock) -> Evidence:
     if not quote:
         raise HydrationError(f"evidence for {ev.doc_id} needs an exact quote from the document")
     return DocEvidence(
+        paragraph=paragraph_of(d.body, quote),
         doc_id=d.doc_id,
         quote=quote[:400],
         pub_date=date.fromisoformat(d.pub_date or "1900-01-01"),
@@ -146,7 +186,7 @@ def verify_citation(
     if t is None or r is None:
         issues.append("NOT_IN_MANIFEST")
     else:
-        if not month_visible(r.month, clock):
+        if not month_visible(r.month, clock) or not table_visible(t, repo, clock):
             issues.append("AFTER_AS_OF")
         if r.quality != "OK":
             issues.append("DAMAGED_ROW")
@@ -156,3 +196,38 @@ def verify_citation(
 
 def evidence_ref(ev: Evidence) -> str:
     return ev.doc_id if isinstance(ev, DocEvidence) else ev.ref
+
+
+def verify_cite(c: str, repo: Repo, clock: Clock, event_id: str | None) -> bool:
+    """A briefing citation string resolves: manifest, as-of, not retracted/quarantined, date and paragraph match."""
+    m = CITE_RX.search(c)
+    if not m:
+        return False
+    if m.group("row"):
+        row = repo.trade_row(m.group("ref"), int(m.group("row")))
+        if row is None:
+            return False
+        tev = TradeEvidence(
+            table_id=m.group("ref"),
+            row=int(m.group("row")),
+            month=row.month or "",
+            value=row.value,
+            volume=row.volume,
+            quality=row.quality,
+        )
+        return verify_citation(tev, repo, clock, event_id).valid and (row.month or "") == m.group("date")
+    d = repo.get_doc(m.group("ref"))
+    if d is None or not d.pub_date:
+        return False
+    if m.group("para") and f"[{m.group('para')}]" not in d.body:
+        return False
+    dev = DocEvidence(
+        doc_id=d.doc_id,
+        quote=(d.body or d.title or "x")[:120],
+        pub_date=date.fromisoformat(d.pub_date),
+        tier=d.tier or 4,
+        event_id=d.event_id or "",
+    )
+    chk = verify_citation(dev, repo, clock, event_id)
+    blocking = [i for i in chk.issues if i not in WARNING_ISSUES]
+    return not blocking and d.pub_date == m.group("date")

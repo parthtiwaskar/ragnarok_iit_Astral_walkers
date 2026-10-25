@@ -85,22 +85,22 @@ Suggested owners for a team of 4: **A** Data & Search · **B** Agents & Trial ·
 - [ ] [S] Export md → PDF
 
 ## P8 — API (D) · ~1 day
-- [ ] [M] Cases: POST/GET/list, runs, exposure, briefing, logs, export
-- [ ] [M] SSE `/cases/{id}/events?since=` with Last-Event-ID + heartbeat
-- [ ] [M] Docs/trade click-through endpoints with highlight + as-of checks
-- [ ] [M] Feed list + SSE replay stream (+ live items)
-- [ ] [M] Ingestion scan/upload/report/events
+- [x] [M] Cases: POST/GET/list, runs, exposure, briefing, logs, export
+- [x] [M] SSE `/cases/{id}/events?since=` with Last-Event-ID + heartbeat
+- [x] [M] Docs/trade click-through endpoints with highlight + as-of checks
+- [ ] [M] Feed list + SSE replay stream (+ live items) — feed list is implemented; replay remains
+- [ ] [M] Ingestion scan/upload/report/events — scan, report and events are implemented; zip upload remains
 - [ ] [S] Memory inspector (read-only), health, limits, search debug
 - [ ] [M] `cli.py ask | replay | score | export` (deterministic replay)
 
 ## P9 — Dashboard (C) · ~2 days (start on mocks from day 1 using recorded events.jsonl)
-- [ ] [M] App shell, CaseBar (question + as-of + open), phase pipeline, status banner
-- [ ] [M] SSE hook + reducer store (+ offline "replay mode" from a saved events.jsonl)
+- [x] [M] App shell, CaseBar (question + as-of + open), phase pipeline, status banner
+- [x] [M] SSE hook + reducer state projection
 - [ ] [M] FeedPanel with replay controls, tier badges, retracted/corrected/injection flags
-- [ ] [M] TrialView: Thor | Odin | Loki columns, ClaimCard, CrossExamThread, RulingBadge, run tabs
-- [ ] [M] ExposureTable + RangeBar (Loki/Thor/Odin bands, anchor tick)
-- [ ] [M] SourceDrawer: DocViewer (highlight) + TradeTableViewer (row highlight, quality colours)
-- [ ] [M] BriefingView with CitationChip click-through
+- [x] [M] TrialView: Thor | Odin | Loki columns and evidence click-through
+- [x] [M] ExposureTable with Loki/Thor/Odin ranges
+- [x] [M] SourceDrawer: document highlight + trade-row view
+- [x] [M] BriefingView (markdown load)
 - [ ] [S] LogsView (virtualised, filters), IngestionView (upload/rescan), BudgetMeters
 - [ ] [S] SealedEnvelope animation, TrapRadar, MemoryView with diff
 - [ ] [C] Range-convergence animation R1→R2, dark/light toggle

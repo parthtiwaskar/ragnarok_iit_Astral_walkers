@@ -28,12 +28,22 @@ from app.ingest.parsers.txt import extract_txt
 from app.ingest.reference import looks_like_reference, parse_reference
 from app.ingest.relations import find_relations, id_pattern
 from app.ingest.sniff import sniff
+from app.ingest.trade_note import parse_trade_note
 from app.ingest.trade_table import looks_like_trade_table, parse_trade_table
 from app.obs.events import emit
 from app.search.dense import Embedder, VectorIndex
 from app.store.repo import DocRecord, Repo
 
 SKIP_NAMES = {"truth.json", ".ds_store", "thumbs.db"}
+# Pack furniture: checksums, readmes, the human-only map, the sample question. These are not
+# documents, so they are neither indexed nor reported as off-manifest. A file the manifest
+# lists is never skipped, whatever it is called.
+SKIP_SUFFIXES = {".sha256", ".md5", ".sha1", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".bmp"}
+SKIP_STEMS = ("readme", "sample_question", "question", "license", "licence", "changelog", "notes_for_")
+
+# A doc cut off mid-sentence whose body is a prefix of a longer doc is a truncated copy of it.
+MIN_PREFIX_CHARS = 200
+SENTENCE_END = ".!?\"')"
 
 
 @dataclass
@@ -60,6 +70,7 @@ class IngestReport:
     by_format: dict[str, int] = field(default_factory=dict)
     quarantine: list[dict[str, Any]] = field(default_factory=list)
     partial: list[dict[str, Any]] = field(default_factory=list)
+    skipped_not_documents: list[str] = field(default_factory=list)
     repaired: list[dict[str, Any]] = field(default_factory=list)
     duplicates: list[dict[str, Any]] = field(default_factory=list)
     off_manifest: list[str] = field(default_factory=list)
@@ -79,6 +90,29 @@ class IngestReport:
 
 def _sha(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+def _manifest_paths(base: Path, file: str | None) -> list[str]:
+    """Resolve a manifest `file` entry to the paths it may name, lower-cased.
+
+    Packs are inconsistent about the prefix: `docs/ORV-0001.txt` and a bare `ORV-0001.txt` both
+    occur for a file that lives in `docs/`. Fall back to a search under the manifest's own folder,
+    and only when it is unambiguous, so two packs cannot claim the same basename.
+    """
+    if not file:
+        return []
+    direct = (base / file).resolve()
+    if direct.exists():
+        return [str(direct).lower()]
+    found = [p for p in base.rglob(Path(file).name) if p.is_file()]
+    return [str(found[0].resolve()).lower()] if len(found) == 1 else []
+
+
+def _is_pack_furniture(p: Path) -> bool:
+    name, stem = p.name.lower(), p.stem.lower()
+    return (
+        p.suffix.lower() in SKIP_SUFFIXES or any(stem.startswith(s) for s in SKIP_STEMS) or name == "readme"
+    )
 
 
 def _extract(data: bytes, kind: str) -> Extracted:
@@ -155,8 +189,8 @@ class Ingestor:
                 any_manifest_file = True
                 for e in load_manifest(mpath, pack):
                     manifest[e.doc_id] = e
-                    if e.file:
-                        by_file[str((mpath.parent / e.file).resolve()).lower()] = e
+                    for resolved in _manifest_paths(mpath.parent, e.file):
+                        by_file[resolved] = e
         if manifest:
             self.repo.upsert_manifest([e.__dict__ for e in manifest.values()])
         rep.manifest_present = any_manifest_file or self.repo.has_manifest()
@@ -179,6 +213,16 @@ class Ingestor:
                     part.startswith(".") for part in p.relative_to(root).parts
                 ):
                     continue
+                rel = str(p.relative_to(root)).replace("\\", "/")
+                if _is_pack_furniture(p) and str(p.resolve()).lower() not in by_file:
+                    key = f"{pack or 'runemark'}/{rel}"
+                    rep.skipped_not_documents.append(key)
+                    emit(
+                        "ingest_update",
+                        actor="ingest",
+                        payload={"file": key, "kind": "skipped", "reason": "not a document"},
+                    )
+                    continue
                 item = self._safe_parse(p, root, pack, rep)
                 if item is not None:
                     parsed.append(item)
@@ -200,6 +244,7 @@ class Ingestor:
             if did:
                 new_doc_ids.append(did)
         self._reconcile_manifest(manifest, rep, seq)
+        new_doc_ids.extend(self._demote_truncated_copies(rep))
         self._relations()
         self._index(new_doc_ids, rep)
 
@@ -560,9 +605,10 @@ class Ingestor:
                 self.vectors.remove_prefix(f"{dup.doc_id}#")
                 rep.duplicates.append({"doc_id": dup.doc_id, "file": dup.file_path, "canonical": doc_id})
                 # anything that pointed at the old canonical now points at the new one
-                for other in self.repo.docs("canonical_id=?", (dup.doc_id,)):
-                    other.canonical_id, other.status_reason = doc_id, f"same body as {doc_id}"
-                    self.repo.upsert_doc(other)
+                for pointed_at_dup in self.repo.docs("canonical_id=?", (dup.doc_id,)):
+                    pointed_at_dup.canonical_id = doc_id
+                    pointed_at_dup.status_reason = f"same body as {doc_id}"
+                    self.repo.upsert_doc(pointed_at_dup)
                 for entry in rep.duplicates:
                     if entry["canonical"] == dup.doc_id:
                         entry["canonical"] = doc_id
@@ -677,6 +723,67 @@ class Ingestor:
                     },
                 )
 
+    def _demote_truncated_copies(self, rep: IngestReport) -> list[str]:
+        """A doc cut off mid-sentence whose body is a prefix of a longer doc is a truncated copy.
+
+        Byte-identical copies are caught by the normalised body hash in `_apply_doc`; a truncated
+        delivery has a different hash, so it would otherwise stay searchable alongside the full
+        text. Runs over every usable doc in the store, so an incremental ingest sees earlier packs.
+        Returns the demoted ids so `_index` clears their chunks, vectors and trade notes.
+        """
+        docs = [d for d in self.repo.docs("status IN ('OK','PARTIAL','REPAIRED')") if d.body]
+        norm = {d.doc_id: " ".join(d.body.lower().split()) for d in docs}
+        changed: list[str] = []
+        for short in docs:
+            body = norm[short.doc_id]
+            if len(body) < MIN_PREFIX_CHARS or body.rstrip()[-1:] in SENTENCE_END:
+                continue  # a complete document is not a truncated copy, however short
+            full = next(
+                (
+                    d
+                    for d in docs
+                    if d.doc_id != short.doc_id
+                    and len(norm[d.doc_id]) > len(body)
+                    and norm[d.doc_id].startswith(body)
+                ),
+                None,
+            )
+            if full is None:
+                continue
+            flags = sorted({*short.flags, "TRUNCATED"})
+            if (full.pub_date or "") <= (short.pub_date or ""):
+                short.status, short.canonical_id = "DUPLICATE", full.doc_id
+                short.status_reason = f"TRUNCATED: a cut-off copy of {full.doc_id}"
+                rep.duplicates.append(
+                    {"doc_id": short.doc_id, "file": short.file_path, "canonical": full.doc_id}
+                )
+            else:
+                # the full text is published later: as of a date between the two, this is the
+                # only visible copy, so keep it readable and say what is wrong with it.
+                short.status = "PARTIAL"
+                short.status_reason = f"TRUNCATED: cut off; completed later by {full.doc_id}"
+                rep.partial.append(
+                    {"doc_id": short.doc_id, "file": short.file_path, "reason": short.status_reason}
+                )
+            short.flags = flags
+            self.repo.upsert_doc(short)
+            changed.append(short.doc_id)
+            self.repo.add_issue(
+                short.file_path or short.doc_id, short.doc_id, short.status, short.status_reason or ""
+            )
+            emit(
+                "ingest_issue",
+                actor="ingest",
+                payload={
+                    "file": short.file_path,
+                    "ref": short.doc_id,
+                    "status": short.status,
+                    "reason": short.status_reason,
+                    "canonical": short.canonical_id,
+                },
+            )
+        return changed
+
     def _relations(self) -> None:
         docs = self.repo.docs("status NOT IN ('QUARANTINED','MISSING')")
         known = {d.doc_id: {"outlet": d.outlet, "pub_date": d.pub_date, "title": d.title} for d in docs}
@@ -699,6 +806,71 @@ class Ingestor:
             ):
                 self.repo.add_relation(rel.src_doc, rel.dst, rel.kind, rel.pub_date)
 
+    def _trade_note(self, d: DocRecord, rep: IngestReport) -> None:
+        """Monthly value/volume paragraphs inside a document become a trade table keyed by the doc id."""
+        note = parse_trade_note(d.doc_id, d.title, d.body)
+        if note is None:
+            return
+        flagged = [r for r in note.rows if r.quality != "OK"]
+        sector = note.sector or (d.sectors[0] if d.sectors else None)
+        flags = list(note.flags)
+        if note.sector and d.sectors and note.sector not in d.sectors:
+            # the route line says what is traded; a different header sector is a metadata conflict
+            flags.append(f"SECTOR_MISMATCH_HEADER:{','.join(d.sectors)}")
+            rep.conflicts.append(
+                {"doc_id": d.doc_id, "field": "sector", "header": d.sectors, "route_line": note.sector}
+            )
+        start, end = note.period
+        self.repo.upsert_trade_table(
+            dict(
+                table_id=d.doc_id,
+                exporter=note.exporter,
+                importer=note.importer,
+                sector=sector,
+                unit=note.unit,
+                period_start=start,
+                period_end=end,
+                event_id=d.event_id,
+                is_background=d.is_background,
+                columns=["row", "month", "value", "volume"],
+                header={"source": "trade_note", "title": d.title},
+                file_path=d.file_path,
+                status="OK" if not flagged and not flags else "PARTIAL",
+                flags=flags,
+                pack=d.pack,
+                ingest_seq=d.ingest_seq,
+                published=d.pub_date,
+                source_doc=d.doc_id,
+            ),
+            [r.__dict__ for r in note.rows],
+        )
+        for r in flagged:
+            ref = f"{d.doc_id}#r{(r.row or 0):02d}"
+            rep.flagged_rows.append({"ref": ref, "flag": r.quality, "raw": r.raw_line, "reason": r.reason})
+            emit(
+                "ingest_issue",
+                actor="ingest",
+                payload={
+                    "file": d.file_path,
+                    "ref": ref,
+                    "status": r.quality,
+                    "reason": r.reason,
+                    "raw": r.raw_line,
+                },
+            )
+        emit(
+            "ingest_update",
+            actor="ingest",
+            payload={
+                "file": d.file_path,
+                "kind": "trade_note",
+                "table_id": d.doc_id,
+                "rows": len(note.rows),
+                "flagged": len(flagged),
+                "sector": sector,
+            },
+        )
+
     def _index(self, doc_ids: list[str], rep: IngestReport) -> None:
         ids: list[str] = []
         texts: list[str] = []
@@ -709,7 +881,9 @@ class Ingestor:
             self.vectors.remove_prefix(f"{doc_id}#")
             if d.status in ("QUARANTINED", "MISSING", "DUPLICATE"):
                 self.repo.replace_chunks(doc_id, [], [])
+                self.repo.delete_trade_table(doc_id)  # a duplicate trade note must not count twice
                 continue
+            self._trade_note(d, rep)
             hits = scan_injections(d.body)
             self.repo.set_injections(doc_id, [(h.start, h.span) for h in hits])
             if hits:
