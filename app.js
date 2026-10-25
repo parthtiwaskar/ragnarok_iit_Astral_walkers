@@ -10,7 +10,10 @@ const SAMPLE_QUESTION = "As of 25 January 2027, how exposed are Midgard and Tola
 let activeQuestion = sessionStorage.getItem("ragnarisk-active-question") || SAMPLE_QUESTION;
 
 const state = { caseId: sessionStorage.getItem("ragnarisk-case") || "", cases: [], running: null, canRun: false, live: [], lastSeq: -1, timer: null, feed: [], feedTimer: null, run: null,
-  answerId: sessionStorage.getItem("ragnarisk-answer") || "", asOf: "", askNotice: "" };
+  answerId: sessionStorage.getItem("ragnarisk-answer") || "", asOf: "", askNotice: "",
+  askMode: sessionStorage.getItem("ragnarisk-mode") === "full" ? "full" : "fast" };
+// Fast answer: per-trial limits the server already accepts (OPTION_RANGES). One run, so no remand.
+const FAST_OPTIONS = { min_runs: 1, max_runs: 1, max_claims_per_side: 3, max_steps_per_turn: 5 };
 
 const pageTitles = {
   ask: "Ask",
@@ -174,6 +177,7 @@ function caseRow(c) {
 function friendlyReason(reasons = []) {
   const text = reasons.join(" ");
   if (/usage limit|rate limit|max_tokens|max_llm_calls|case_timeout/i.test(text)) return "A usage or time limit was reached before the second trial run finished.";
+  if (/max_runs=1\b/.test(text)) return "Fast answer: one trial run, so Odin could not send the case back for more evidence.";
   if (/unchallenged/i.test(text)) return "One side went unchallenged.";
   if (/new evidence/i.test(text)) return "A second run could not find new evidence.";
   return text ? text.replace(/\{.*$/s, "").slice(0, 140).trim() : "Some steps did not finish.";
@@ -721,6 +725,10 @@ function renderAsk() {
       <form class="ask-box" id="ask-form">
         <label for="ask-query" class="sr-only">Your question</label>
         <textarea id="ask-query" rows="3" placeholder="For example: how exposed is Midgard to the end of the Orvan corridor agreement?">${escapeHtml(activeQuestion)}</textarea>
+        <fieldset class="ask-mode"><legend class="sr-only">How thorough</legend>
+          <label><input type="radio" name="ask-mode" value="fast" ${state.askMode === "fast" ? "checked" : ""} /> <span><b>Fast answer</b><small>One trial run, fewer claims per side. Quicker.</small></span></label>
+          <label><input type="radio" name="ask-mode" value="full" ${state.askMode === "full" ? "checked" : ""} /> <span><b>Full trial</b><small>Two runs with Odin's remand. Most rigorous, slower.</small></span></label>
+        </fieldset>
         <div class="ask-row">
           <label class="ask-date">As of <input type="date" id="ask-asof" value="${escapeHtml(state.asOf)}" /></label>
           <button type="button" class="link-btn" data-action="ask-example">Use the sample question</button>
@@ -746,7 +754,7 @@ function renderAsk() {
 function progressMarkup() {
   const lines = state.live.slice(-8);
   return `<div class="answer-card working"><span class="spinner" aria-hidden="true"></span><div><h2>Working on your answer…</h2>
-    <p>Heimdall checks the event, Thor and Loki argue opposite sides, then Odin rules on every claim. This usually takes a few minutes.</p>
+    <p>Heimdall checks the event, Thor and Loki argue opposite sides, then Odin rules on every claim. ${state.askMode === "fast" ? "Fast answer: one trial run." : "Full trial: two runs with a remand, so this takes longer."} Every step is a live AI call; progress appears below.</p>
     ${lines.length ? `<ol class="live-lines">${lines.map((l) => `<li>${escapeHtml(l)}</li>`).join("")}</ol>` : ""}</div></div>`;
 }
 
@@ -766,7 +774,8 @@ async function askQuestion(question, asOf) {
     return renderAsk();
   }
   try {
-    const { case_id: id } = await api("/cases", { method: "POST", body: JSON.stringify({ question, ...(asOf ? { as_of: asOf } : {}) }) });
+    const body = { question, ...(asOf ? { as_of: asOf } : {}), ...(state.askMode === "fast" ? { options: FAST_OPTIONS } : {}) };
+    const { case_id: id } = await api("/cases", { method: "POST", body: JSON.stringify(body) });
     Object.assign(state, { answerId: id, caseId: id, run: null, live: [] });
     sessionStorage.setItem("ragnarisk-answer", id);
     sessionStorage.setItem("ragnarisk-case", id);
@@ -866,7 +875,7 @@ function rigorStats(run) {
 
 function answerMarkup(run) {
   const head = `<header class="answer-head"><span class="answer-kicker">Answer</span><p class="answer-q">${escapeHtml(run.question)}</p>
-    <div class="answer-meta">${statusBadge(run.status)}${run.verified ? '<span class="verified">✓ Event verified</span>' : ""}<span>As of ${escapeHtml(fmtDate(run.as_of))}</span><span>Case ${escapeHtml(run.case_id)}</span>${run.provider === "imported" ? "<span>Saved trial</span>" : ""}</div></header>`;
+    <div class="answer-meta">${statusBadge(run.status)}${run.verified ? '<span class="verified">✓ Event verified</span>' : ""}${(run.runs || []).length === 1 ? "<span>Fast answer · 1 trial run</span>" : ""}<span>As of ${escapeHtml(fmtDate(run.as_of))}</span><span>Case ${escapeHtml(run.case_id)}</span>${run.provider === "imported" ? "<span>Saved trial</span>" : ""}</div></header>`;
   if (!["COMPLETE", "INCOMPLETE"].includes(run.status)) {
     const rejected = run.status === "REJECTED";
     const why = rejected ? run.verdict_reason || friendlyReason(run.status_reasons) : (run.status_reasons || []).join(" ") || "The trial stopped before any ruling.";
@@ -1031,6 +1040,7 @@ document.addEventListener("input", (event) => {
 });
 
 document.addEventListener("change", (event) => {
+  if (event.target.name === "ask-mode") { state.askMode = event.target.value; sessionStorage.setItem("ragnarisk-mode", state.askMode); }
   if (["source-filter", "tier-filter", "country-filter"].includes(event.target.id)) loadDocs();
   if (event.target.id === "case-select") { state.caseId = event.target.value; sessionStorage.setItem("ragnarisk-case", state.caseId); state.run = null; renderBriefing(); }
 });
