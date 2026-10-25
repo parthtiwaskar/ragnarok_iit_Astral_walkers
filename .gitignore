@@ -17,6 +17,7 @@ venv/
 # node / frontend
 node_modules/
 frontend/dist/
+*.tsbuildinfo
 
 # generated at runtime (index, private agent memory, case runs)
 data/index/
