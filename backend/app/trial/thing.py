@@ -18,16 +18,16 @@ from app.agents.odin import Odin
 from app.agents.sides import SideAgent
 from app.briefing.digest import all_citable_refs, build_digest
 from app.briefing.render import deterministic_sections, render_markdown
-from app.briefing.validate import CITATION, normalize_cite, sanitize, validate_sections
+from app.briefing.validate import sanitize, validate_sections
 from app.memory.reflect import reflect
 from app.obs.artifacts import Artifacts, git_commit
 from app.tools.asof import Clock
-from app.tools.citation import parse_trade_ref, verify_citation
+from app.tools.citation import CITE_RX as CITATION
+from app.tools.citation import cite_ref, normalize_cite, verify_cite
 from app.tools.context import CaseContext
 from app.trial.casefile import (
     SIDES,
     CaseFile,
-    DocEvidence,
     Phase,
     Ruling,
     SideStatus,
@@ -452,44 +452,7 @@ class Thing:
         return ("COMPLETE" if not reasons else "INCOMPLETE"), reasons
 
     def _verify_cite(self, c: str) -> bool:
-        m = CITATION.search(c)
-        if not m:
-            return False
-        repo = self.ctx.services.repo
-        if m.group(2):
-            ref = parse_trade_ref(f"{m.group(1)}#r{m.group(2)}")
-            if ref is None:
-                return False
-            row = repo.trade_row(ref[0], ref[1])
-            if row is None:
-                return False
-            from app.trial.casefile import TradeEvidence
-
-            ev: Any = TradeEvidence(
-                table_id=ref[0],
-                row=ref[1],
-                month=row.month or "",
-                value=row.value,
-                volume=row.volume,
-                quality=row.quality,
-            )
-            return verify_citation(ev, repo, self.ctx.clock, self.ctx.event_id).valid
-        d = repo.get_doc(m.group(1))
-        if d is None or not d.pub_date:
-            return False
-        from datetime import date
-
-        quote = (d.body or d.title or "")[:120] or "x"
-        ev = DocEvidence(
-            doc_id=d.doc_id,
-            quote=quote,
-            pub_date=date.fromisoformat(d.pub_date),
-            tier=d.tier or 4,
-            event_id=d.event_id or "",
-        )
-        chk = verify_citation(ev, repo, self.ctx.clock, self.ctx.event_id)
-        blocking = [i for i in chk.issues if i not in ("CORRECTED_AS_OF", "BACKGROUND_ONLY")]
-        return not blocking and d.pub_date == m.group(3)
+        return verify_cite(c, self.ctx.services.repo, self.ctx.clock, self.ctx.event_id)
 
     async def _briefing(self) -> None:
         ctx, cf = self.ctx, self.cf
@@ -529,11 +492,7 @@ class Thing:
             for name in ("executive_summary", "established", "contested", "conceded", "outlook")
             for m in CITATION.finditer(str(sections.get(name) or ""))
         }
-        cited_refs = set()
-        for c in cited:
-            m = CITATION.search(c)
-            if m:
-                cited_refs.add(f"{m.group(1)}#r{int(m.group(2)):02d}" if m.group(2) else m.group(1))
+        cited_refs = {r for r in (cite_ref(c) for c in cited) if r}
         cited_refs |= all_citable_refs(cf)
         md = render_markdown(
             cf,

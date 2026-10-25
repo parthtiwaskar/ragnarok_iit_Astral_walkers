@@ -76,6 +76,7 @@ class DocEvidence(BaseModel):
     pub_date: date  # filled by tool layer, not the LLM
     tier: int  # 1..4, filled by tool layer
     event_id: str  # filled by tool layer
+    paragraph: str | None = None  # e.g. "P3": the document paragraph holding the quote (tool layer)
     off_runemark: bool = False  # always False in practice (no web tools); safety label
 
     @property

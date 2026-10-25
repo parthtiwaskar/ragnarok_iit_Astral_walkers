@@ -7,7 +7,9 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-CITATION = re.compile(r"\[([A-Za-z0-9_\-]+)(?: r(\d+))?, (\d{4}-\d{2}(?:-\d{2})?)\]")
+from app.tools.citation import CITE_RX as CITATION
+from app.tools.citation import normalize_cite as normalize_cite
+
 RULING_ID = re.compile(r"RUL:[A-Za-z0-9\-]+:R\d+")
 SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+(?=[A-Z(\[\-*])|\n+")
 META = re.compile(r"\b(INCOMPLETE|COMPLETE|status|no evidence found|unchallenged|failed)\b", re.I)
@@ -27,11 +29,6 @@ class BriefingCheck:
 
     def as_dict(self) -> dict[str, Any]:
         return self.__dict__.copy()
-
-
-def normalize_cite(m: re.Match[str]) -> str:
-    ref, row, d = m.group(1), m.group(2), m.group(3)
-    return f"[{ref} r{int(row):02d}, {d}]" if row else f"[{ref}, {d}]"
 
 
 def sentences(text: str) -> list[str]:

@@ -7,7 +7,16 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from app.tools.asof import Clock
-from app.tools.citation import EvidenceIn, HydrationError, hydrate, verify_citation
+from app.tools.citation import (
+    CITE_RX,
+    EvidenceIn,
+    HydrationError,
+    cite_ref,
+    hydrate,
+    normalize_cite,
+    paragraph_of,
+    verify_citation,
+)
 from app.tools.context import Services
 from app.tools.exposure import compute, exposure_pct, final_params, normalize_interval
 from app.trial.casefile import Claim, DocEvidence, Position, Ruling
@@ -67,6 +76,18 @@ def test_damaged_trade_row_is_never_valid(services: Services) -> None:
     assert not chk.valid and "DAMAGED_ROW" in chk.issues
     good = hydrate(EvidenceIn(table_id="TT-A01", row=9), services.repo, clock)
     assert verify_citation(good, services.repo, clock, "EVT-A").valid
+
+
+def test_briefing_citation_helpers_normalize_rows_and_find_paragraphs() -> None:
+    match = CITE_RX.search("[TT-A01 r9, 2025-03]")
+    assert match is not None
+    assert normalize_cite(match) == "[TT-A01 r09, 2025-03]"
+    assert cite_ref("[TT-A01 r09, 2025-03]") == "TT-A01#r09"
+    assert cite_ref("[RM-DOC-0101 P2, 2025-03-01]") == "RM-DOC-0101"
+    assert (
+        paragraph_of("[P1] Unrelated. [P2] The canal is closed to all traffic.", "closed to all traffic")
+        == "P2"
+    )
 
 
 def test_formula_corners_and_worked_example() -> None:

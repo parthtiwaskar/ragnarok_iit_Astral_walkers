@@ -119,6 +119,8 @@ class TradeTableRecord:
     flags: list[str]
     pack: str | None
     ingest_seq: int
+    published: str | None = None  # publication date of the source document (trade notes)
+    source_doc: str | None = None  # the document the table was read from, if any
 
     @staticmethod
     def from_row(r: sqlite3.Row) -> TradeTableRecord:
@@ -139,6 +141,8 @@ class TradeTableRecord:
             flags=_l(r["flags"]),
             pack=r["pack"],
             ingest_seq=r["ingest_seq"] or 0,
+            published=r["published"],
+            source_doc=r["source_doc"],
         )
 
 
@@ -350,13 +354,13 @@ class Repo:
         with self.db.write_lock, self.db.connect() as c:
             c.execute(
                 "INSERT INTO trade_tables(table_id,exporter,importer,sector,unit,period_start,period_end,event_id,"
-                "is_background,columns,header,file_path,status,flags,pack,ingest_seq) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(table_id) DO UPDATE SET "
+                "is_background,columns,header,file_path,status,flags,pack,ingest_seq,published,source_doc) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(table_id) DO UPDATE SET "
                 "exporter=excluded.exporter,importer=excluded.importer,sector=excluded.sector,unit=excluded.unit,"
                 "period_start=excluded.period_start,period_end=excluded.period_end,event_id=excluded.event_id,"
                 "is_background=excluded.is_background,columns=excluded.columns,header=excluded.header,"
                 "file_path=excluded.file_path,status=excluded.status,flags=excluded.flags,pack=excluded.pack,"
-                "ingest_seq=excluded.ingest_seq",
+                "ingest_seq=excluded.ingest_seq,published=excluded.published,source_doc=excluded.source_doc",
                 (
                     t["table_id"],
                     t.get("exporter"),
@@ -374,6 +378,8 @@ class Repo:
                     _j(t.get("flags", [])),
                     t.get("pack"),
                     t.get("ingest_seq", 0),
+                    t.get("published"),
+                    t.get("source_doc"),
                 ),
             )
             c.execute("DELETE FROM trade_rows WHERE table_id=?", (t["table_id"],))
@@ -391,6 +397,11 @@ class Repo:
                         r.get("reason", ""),
                     ),
                 )
+
+    def delete_trade_table(self, table_id: str) -> None:
+        with self.db.write_lock, self.db.connect() as c:
+            c.execute("DELETE FROM trade_rows WHERE table_id=?", (table_id,))
+            c.execute("DELETE FROM trade_tables WHERE table_id=?", (table_id,))
 
     def get_trade_table(self, table_id: str) -> TradeTableRecord | None:
         r = self.db.one("SELECT * FROM trade_tables WHERE table_id=?", (table_id,))

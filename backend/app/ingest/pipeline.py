@@ -28,6 +28,7 @@ from app.ingest.parsers.txt import extract_txt
 from app.ingest.reference import looks_like_reference, parse_reference
 from app.ingest.relations import find_relations, id_pattern
 from app.ingest.sniff import sniff
+from app.ingest.trade_note import parse_trade_note
 from app.ingest.trade_table import looks_like_trade_table, parse_trade_table
 from app.obs.events import emit
 from app.search.dense import Embedder, VectorIndex
@@ -699,6 +700,71 @@ class Ingestor:
             ):
                 self.repo.add_relation(rel.src_doc, rel.dst, rel.kind, rel.pub_date)
 
+    def _trade_note(self, d: DocRecord, rep: IngestReport) -> None:
+        """Monthly value/volume paragraphs inside a document become a trade table keyed by the doc id."""
+        note = parse_trade_note(d.doc_id, d.title, d.body)
+        if note is None:
+            return
+        flagged = [r for r in note.rows if r.quality != "OK"]
+        sector = note.sector or (d.sectors[0] if d.sectors else None)
+        flags = list(note.flags)
+        if note.sector and d.sectors and note.sector not in d.sectors:
+            # the route line says what is traded; a different header sector is a metadata conflict
+            flags.append(f"SECTOR_MISMATCH_HEADER:{','.join(d.sectors)}")
+            rep.conflicts.append(
+                {"doc_id": d.doc_id, "field": "sector", "header": d.sectors, "route_line": note.sector}
+            )
+        start, end = note.period
+        self.repo.upsert_trade_table(
+            dict(
+                table_id=d.doc_id,
+                exporter=note.exporter,
+                importer=note.importer,
+                sector=sector,
+                unit=note.unit,
+                period_start=start,
+                period_end=end,
+                event_id=d.event_id,
+                is_background=d.is_background,
+                columns=["row", "month", "value", "volume"],
+                header={"source": "trade_note", "title": d.title},
+                file_path=d.file_path,
+                status="OK" if not flagged and not flags else "PARTIAL",
+                flags=flags,
+                pack=d.pack,
+                ingest_seq=d.ingest_seq,
+                published=d.pub_date,
+                source_doc=d.doc_id,
+            ),
+            [r.__dict__ for r in note.rows],
+        )
+        for r in flagged:
+            ref = f"{d.doc_id}#r{(r.row or 0):02d}"
+            rep.flagged_rows.append({"ref": ref, "flag": r.quality, "raw": r.raw_line, "reason": r.reason})
+            emit(
+                "ingest_issue",
+                actor="ingest",
+                payload={
+                    "file": d.file_path,
+                    "ref": ref,
+                    "status": r.quality,
+                    "reason": r.reason,
+                    "raw": r.raw_line,
+                },
+            )
+        emit(
+            "ingest_update",
+            actor="ingest",
+            payload={
+                "file": d.file_path,
+                "kind": "trade_note",
+                "table_id": d.doc_id,
+                "rows": len(note.rows),
+                "flagged": len(flagged),
+                "sector": sector,
+            },
+        )
+
     def _index(self, doc_ids: list[str], rep: IngestReport) -> None:
         ids: list[str] = []
         texts: list[str] = []
@@ -709,7 +775,9 @@ class Ingestor:
             self.vectors.remove_prefix(f"{doc_id}#")
             if d.status in ("QUARANTINED", "MISSING", "DUPLICATE"):
                 self.repo.replace_chunks(doc_id, [], [])
+                self.repo.delete_trade_table(doc_id)  # a duplicate trade note must not count twice
                 continue
+            self._trade_note(d, rep)
             hits = scan_injections(d.body)
             self.repo.set_injections(doc_id, [(h.start, h.span) for h in hits])
             if hits:

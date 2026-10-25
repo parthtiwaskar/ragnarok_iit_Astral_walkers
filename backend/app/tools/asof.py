@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Any, Literal
 
-from app.store.repo import DocRecord, RelationRecord, Repo
+from app.store.repo import DocRecord, RelationRecord, Repo, TradeTableRecord
 
 FACTUAL_MEMORY_KINDS = frozenset({"fact", "query", "source_note", "precedent", "turn_note"})
 
@@ -33,6 +33,18 @@ def doc_visible(d: DocRecord | None, clock: Clock) -> bool:
     if d.pub_date > clock.iso:
         return False
     return not (clock.pin is not None and d.ingest_seq > clock.pin)
+
+
+def table_visible(t: TradeTableRecord | None, repo: Repo, clock: Clock) -> bool:
+    """A table read from a document (trade note) exists only once that document is published."""
+    if t is None:
+        return False
+    if t.source_doc:
+        src = repo.get_doc(t.source_doc)
+        return src is not None and src.usable and doc_visible(src, clock)
+    if t.published and t.published > clock.iso:
+        return False
+    return not (clock.pin is not None and t.ingest_seq > clock.pin)
 
 
 def month_end(month: str) -> date:
