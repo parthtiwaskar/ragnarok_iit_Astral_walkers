@@ -30,6 +30,10 @@ n-gram embedder, so search works offline. Force one with `NINE_REALMS_EMBEDDER=h
 environment or a gitignored `.env` in the repo root. Keys are never sent to the browser. Groq's free tier is too small
 (daily token cap, weak JSON discipline on the 20b model) to complete a trial; use Anthropic.
 
+## Charts
+The dashboard draws its charts with plain SVG (`charts.js`, no dependencies): monthly trade flows with a year-on-year overlay
+(from `/api/trade`), Thor/Loki/Odin range comparison, a source timeline by month and tier, and claim status bars.
+
 Layout: `models.py` Case File · `tools.py` tool catalogue, allowlists, limits, guard chain · `agents/` the four agents and
 prompts · `thing.py` orchestrator · `briefing.py` digest + renderer · `memory.py` per-agent private memory ·
 `corpus.py` ingestion into SQLite + tools · `store.py` cases/claims/rulings/events tables · `server.py` API + dashboard · `embed.py` embedders for semantic search · `env.py` .env loader · `llm.py` Anthropic / OpenAI-compatible clients + `FakeLLM`.

@@ -324,7 +324,8 @@ class LocalCorpus:
 
     # -- API helpers (not agent tools: they do not apply the as-of firewall, the UI shows every record) ----------
     def list_documents(self, country: str = "", sector: str = "", source_type: str = "", tier: int | None = None,
-                       prefix: str = "", text: str = "", as_of: str = "", limit: int = 200, offset: int = 0) -> dict[str, Any]:
+                       prefix: str = "", text: str = "", as_of: str = "", limit: int = 200, offset: int = 0,
+                       date_from: str = "", date_to: str = "", exclude_type: str = "") -> dict[str, Any]:
         as_of = as_of or self.pack_as_of
         hits: dict[str, float] | None = None
         matched: dict[str, list[str]] = {}
@@ -340,11 +341,30 @@ class LocalCorpus:
                 continue
             if hits is not None and d["doc_id"] not in hits:
                 continue
+            if date_from and d["date"] < date_from or date_to and d["date"] > date_to or exclude_type and d["source_type"] == exclude_type:
+                continue
             out.append({**self._meta(d, as_of), "format": d["format"], "after_as_of": d["date"] > as_of, "duplicate_of": d["duplicate_of"],
                         "notes": d["notes"], "matched_by": matched.get(d["doc_id"], [])})
         if hits is not None:
             out.sort(key=lambda d: -hits[d["doc_id"]])
         return {"total": len(out), "documents": out[offset: offset + max(1, min(limit, 500))], "quarantined": self.quarantine}
+
+    def trade_series(self, as_of: str = "") -> list[dict[str, Any]]:
+        """Monthly trade rows per trade note (damaged rows excluded), for the charts. Same numbers the agents see."""
+        as_of = as_of or self.pack_as_of
+        out = []
+        for d in sorted(self.docs.values(), key=lambda d: d["doc_id"]):
+            if d["source_type"] != "trade_note" or d["date"] > as_of or d["duplicate_of"]:
+                continue
+            t = self.t_read_trade_table(d["doc_id"], as_of)
+            if "error" in t:
+                continue
+            rows = [r for r in t["rows"] if r["quality"] == "ok"]
+            m = _TITLE_ROUTE.search(d["title"])
+            out.append({"doc_id": d["doc_id"], "title": d["title"], "from": m.group(1) if m else "?", "to": m.group(2) if m else "?",
+                        "product": m.group(3).lower() if m else "?", "tier": d["tier"], "date": d["date"], "outlet": d["outlet"],
+                        "rows": rows, "damaged_rows": len(t["rows"]) - len(rows), "flags": self._status(d, as_of)["flags"]})
+        return out
 
     def get_document(self, doc_id: str) -> dict[str, Any] | None:
         d = self.docs.get(doc_id)

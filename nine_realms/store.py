@@ -137,7 +137,8 @@ class Store:
         return case["case_id"]
 
     # -- reads ------------------------------------------------------------------------
-    def list_cases(self) -> list[dict[str, Any]]:
+    def list_cases(self, include_empty: bool = False) -> list[dict[str, Any]]:
+        """Newest first. Aborted cases that never gathered a claim are hidden unless include_empty."""
         with self._lock:
             rows = self.db.execute(
                 "SELECT c.case_id, c.question, c.as_of, c.status, c.event_id, c.provider, c.created_at, c.updated_at, "
@@ -145,7 +146,8 @@ class Store:
                 "(SELECT COUNT(*) FROM claims k WHERE k.case_id=c.case_id) AS claims, "
                 "(SELECT COUNT(*) FROM rulings g WHERE g.case_id=c.case_id) AS rulings, c.scope "
                 "FROM cases c ORDER BY c.updated_at DESC").fetchall()
-        return [{**dict(r), "scope": json.loads(r["scope"] or "[]")} for r in rows]
+        return [{**dict(r), "scope": json.loads(r["scope"] or "[]")} for r in rows
+                if include_empty or not (r["status"] == "ABORTED" and r["claims"] == 0)]
 
     def load_case(self, case_id: str) -> dict[str, Any] | None:
         with self._lock:

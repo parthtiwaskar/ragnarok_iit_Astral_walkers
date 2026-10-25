@@ -7,6 +7,7 @@ Serves index.html / app.js / styles.css and a JSON API backed by one SQLite file
   GET  /api/summary                     counts for the overview page
   GET  /api/documents?text=&country=&sector=&source_type=&tier=&limit=   corpus explorer (full-text search + filters)
   GET  /api/documents/<DOC_ID>          one document with paragraphs and parsed trade rows
+  GET  /api/trade                       monthly trade rows per trade note (for the charts)
   GET  /api/feed                        news items in publication order (for the live-feed replay)
   GET  /api/cases                       saved cases
   GET  /api/cases/<id>                  full case (claims, evidence, attacks, responses, rulings, ranges, briefing)
@@ -42,7 +43,7 @@ from .thing import Thing
 from .tools import Limits
 
 ROOT = Path(__file__).resolve().parent.parent
-STATIC = {"/": "index.html", "/index.html": "index.html", "/app.js": "app.js", "/styles.css": "styles.css"}
+STATIC = {"/": "index.html", "/index.html": "index.html", "/app.js": "app.js", "/charts.js": "charts.js", "/styles.css": "styles.css"}
 DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 # Per-case limit overrides a client may ask for (e.g. a small trial). Anything else is ignored.
 OPTION_RANGES = {"min_runs": (1, 3), "max_runs": (1, 3), "max_claims_per_side": (1, 8), "max_steps_per_turn": (4, 12)}
@@ -144,10 +145,13 @@ def make_handler(app: App):
                 tier = int(q["tier"]) if q.get("tier", "").isdigit() else None
                 return self._json(200, c.list_documents(q.get("country", ""), q.get("sector", ""), q.get("source_type", ""), tier,
                                                         q.get("prefix", ""), q.get("text", ""), q.get("as_of", ""),
-                                                        int(q.get("limit", 200)), int(q.get("offset", 0))))
+                                                        int(q.get("limit", 200)), int(q.get("offset", 0)),
+                                                        q.get("date_from", ""), q.get("date_to", ""), q.get("exclude_type", "")))
             if len(parts) == 2 and parts[0] == "documents":
                 d = c.get_document(parts[1])
                 return self._json(200, d) if d else self._json(404, {"error": "no such document"})
+            if parts == ["trade"]:
+                return self._json(200, {"tables": c.trade_series(q.get("as_of", "")), "as_of": q.get("as_of") or c.pack_as_of})
             if parts == ["feed"]:
                 return self._json(200, {"items": c.feed(q.get("as_of", ""), int(q.get("limit", 60)))})
             if parts == ["cases"]:
