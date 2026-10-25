@@ -600,7 +600,7 @@ button:active:not(:disabled) { transform: scale(.98); }
 .debate-line { flex-basis: 100%; margin: 6px 0 0; color: var(--muted); font-size: 12px; line-height: 1.7; } .debate-line b { color: var(--text); margin-right: 6px; }
 .trial-cols[data-filter="revised"] .claim[data-status="revised"] { display: block; }
 
-.dialog input[type="password"] { width: 100%; padding: 11px; border: 1px solid #2a384b; border-radius: 5px; background: #0c1421; color: #e3ebf5; font: 14px var(--mono); }
+.dialog input[type="password"], .dialog input[type="text"] { width: 100%; padding: 11px; border: 1px solid #2a384b; border-radius: 5px; background: #0c1421; color: #e3ebf5; font: 14px var(--mono); }
 .token-error { margin: 10px 0 0; color: var(--rose); font-size: 12px; }
 
 /* ==== Clean shell: top tabs instead of the sidebar ==================================== */
