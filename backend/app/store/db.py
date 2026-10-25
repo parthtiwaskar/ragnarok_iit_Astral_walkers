@@ -31,7 +31,8 @@ CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(text, chunk_id UNINDEXE
 CREATE TABLE IF NOT EXISTS trade_tables(
   table_id TEXT PRIMARY KEY, exporter TEXT, importer TEXT, sector TEXT, unit TEXT, period_start TEXT,
   period_end TEXT, event_id TEXT, is_background INTEGER DEFAULT 0, columns TEXT, header TEXT,
-  file_path TEXT, status TEXT, flags TEXT DEFAULT '[]', pack TEXT, ingest_seq INTEGER DEFAULT 0);
+  file_path TEXT, status TEXT, flags TEXT DEFAULT '[]', pack TEXT, ingest_seq INTEGER DEFAULT 0,
+  published TEXT, source_doc TEXT);
 CREATE TABLE IF NOT EXISTS trade_rows(
   id INTEGER PRIMARY KEY AUTOINCREMENT, table_id TEXT, row INTEGER, month TEXT, value REAL, volume REAL,
   quality TEXT, raw_line TEXT, reason TEXT);
@@ -53,6 +54,10 @@ class Database:
         self.write_lock = threading.RLock()
         with self.connect() as conn:
             conn.executescript(SCHEMA)
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(trade_tables)")}
+            for col in ("published", "source_doc"):  # migrate indexes built before trade notes existed
+                if col not in cols:
+                    conn.execute(f"ALTER TABLE trade_tables ADD COLUMN {col} TEXT")
 
     def _conn(self) -> sqlite3.Connection:
         conn: sqlite3.Connection | None = getattr(self._local, "conn", None)

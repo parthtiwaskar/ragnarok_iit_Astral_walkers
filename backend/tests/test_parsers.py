@@ -7,7 +7,9 @@ from app.ingest.parsers import ExtractError
 from app.ingest.parsers.docx import extract_docx
 from app.ingest.parsers.pdf import extract_pdf
 from app.ingest.parsers.txt import extract_txt
+from app.ingest.relations import find_relations, id_pattern
 from app.ingest.sniff import sniff
+from app.ingest.trade_note import parse_trade_note
 from app.ingest.trade_table import parse_trade_table
 
 
@@ -105,3 +107,46 @@ def test_trade_table_whitespace_delimited() -> None:
     text = "Table ID: TT-W\nCountry Pair: A to B\nSector: grain\nPeriod: 2025-01 to 2025-02\n\nrow  month  value  volume\n01  2025-01  5  1\n02  2025-02  6  2\n"
     t = parse_trade_table(text)
     assert [r.quality for r in t.rows] == ["OK", "OK"] and t.rows[1].value == 6
+
+
+def test_trade_note_extracts_paragraph_rows_and_flags_duplicate_month() -> None:
+    body = """[P1] Route: Asteria to Borealis, copper.
+[P2] In January 2026, value was USD 10M and volume was 20 tonnes.
+[P3] In February 2026, value was USD 12M and volume was 22 tonnes.
+[P4] In February 2026, value was USD 13M and volume was 23 tonnes.
+[P5] In March 2026, value was USD 11M and volume was 21 tonnes.
+"""
+    note = parse_trade_note("ORV-99", "Monthly Asteria to Borealis, copper", body)
+    assert note is not None
+    assert (note.exporter, note.importer, note.sector, note.period) == (
+        "Asteria",
+        "Borealis",
+        "copper",
+        ("2026-01", "2026-03"),
+    )
+    assert [(row.row, row.quality) for row in note.rows] == [
+        (2, "OK"),
+        (3, "OK"),
+        (4, "DUPLICATE_ROW"),
+        (5, "OK"),
+    ]
+
+
+def test_relation_finds_natural_date_reference() -> None:
+    known = {
+        "ORV-1": {"outlet": "Runewire", "pub_date": "2026-09-09", "title": "Canal disruption"},
+        "ORV-2": {"outlet": "Runewire", "pub_date": "2026-09-10", "title": "Other report"},
+    }
+    relations = find_relations(
+        "ORV-3",
+        "correction",
+        "Correction: Canal disruption",
+        "On 9 September we reported the canal disruption incorrectly.",
+        "2026-09-11",
+        2,
+        "E5",
+        "Runewire",
+        known,
+        id_pattern(["ORV-1", "ORV-2", "ORV-3"]),
+    )
+    assert [(relation.dst, relation.kind) for relation in relations] == [("ORV-1", "corrects")]

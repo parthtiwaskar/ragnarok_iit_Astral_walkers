@@ -11,7 +11,8 @@ from app.trial.sufficiency import checks_for, valid_evidence
 
 def cite(e: DocEvidence | TradeEvidence) -> str:
     if isinstance(e, DocEvidence):
-        return f"[{e.doc_id}, {e.pub_date.isoformat()}]"
+        para = f" {e.paragraph}" if e.paragraph else ""
+        return f"[{e.doc_id}{para}, {e.pub_date.isoformat()}]"
     return f"[{e.table_id} r{e.row:02d}, {e.month}]"
 
 
@@ -22,6 +23,7 @@ def citation_entry(e: DocEvidence | TradeEvidence) -> dict[str, Any]:
             "date": e.pub_date.isoformat(),
             "kind": "doc",
             "tier": e.tier,
+            "paragraph": e.paragraph,
             "cite": cite(e),
         }
     return {

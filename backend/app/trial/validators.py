@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
-from app.tools.asof import as_of_status, doc_visible
+from app.tools.asof import as_of_status, doc_visible, table_visible
 from app.tools.catalog import record_calc
 from app.tools.citation import EvidenceIn, HydrationError, evidence_ref, hydrate, verify_citation
 from app.tools.context import CaseContext
@@ -226,7 +226,7 @@ def apply_case_file(ctx: CaseContext, a: SubmitCaseFileArgs, last: bool) -> Appl
             sector = _norm_name(r.sector, sectors).lower()
             if countries and country not in countries:
                 warnings.append(f"UNKNOWN_COUNTRY: {r.country}")
-            tables = [t for t in r.trade_tables if repo.get_trade_table(t) is not None]
+            tables = [t for t in r.trade_tables if table_visible(repo.get_trade_table(t), repo, ctx.clock)]
             dropped = [t for t in r.trade_tables if t not in tables]
             if dropped:
                 (errors if not last else warnings).append(
@@ -235,7 +235,7 @@ def apply_case_file(ctx: CaseContext, a: SubmitCaseFileArgs, last: bool) -> Appl
             if not tables:
                 tables = [
                     t.table_id
-                    for t in tables_for(repo, None, country, sector)
+                    for t in tables_for(repo, None, country, sector, ctx.clock)
                     if (t.event_id or "").lower() == a.event_id.lower()
                 ]
             stats = row_stats(repo, tables, event_date, ctx.clock, s.BASELINE_MONTHS)
@@ -348,7 +348,7 @@ def apply_case_file(ctx: CaseContext, a: SubmitCaseFileArgs, last: bool) -> Appl
 def _scope_from_tables(ctx: CaseContext, event_id: str, event_date: date | None) -> list[ScopeRowIn]:
     repo = ctx.services.repo
     groups: dict[tuple[str, str], list[str]] = {}
-    for t in tables_for(repo, event_id):
+    for t in tables_for(repo, event_id, clock=ctx.clock):
         if t.importer and t.sector:
             groups.setdefault((t.importer, t.sector), []).append(t.table_id)
     scored = []

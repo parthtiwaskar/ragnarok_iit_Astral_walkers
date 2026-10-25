@@ -1,0 +1,17 @@
+Doc ID: RM-DOC-0188
+Title: How the Serpent Canal detour works
+Outlet: Freight & Ledger
+Publication Date: 2025-03-11
+Source Type: explainer
+Event ID: EVT-A
+Country: Brenmark
+Sector: electronics
+Reliability Tier: 2
+
+The Serpent Canal detour adds sea miles rather than removing them, and the cost shows up in freight rates.
+
+Ships that would have transited the northern channel now round the Eskerland cape, which adds about nine days.
+
+Forwarders price that delay into every contract, so the quoted rate moves before any volume does.
+
+Rail is the only overland alternative and the Harrowgate terminal can unload at most twelve trains a day.

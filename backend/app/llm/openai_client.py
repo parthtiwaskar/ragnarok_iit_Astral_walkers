@@ -14,12 +14,16 @@ NO_SAMPLING_PREFIXES = ("o1", "o3", "o4", "gpt-5")  # reasoning models reject te
 class OpenAIClient:
     provider = "openai"
 
-    def __init__(self, model: str | None, api_key: str | None, timeout_s: float = 170.0) -> None:
+    def __init__(
+        self, model: str | None, api_key: str | None, timeout_s: float = 170.0, base_url: str | None = None
+    ) -> None:
         import openai
 
         self._sdk = openai
         self.model = model or DEFAULT_MODEL
-        self._client = openai.AsyncOpenAI(api_key=api_key or None, max_retries=0, timeout=timeout_s)
+        self._client = openai.AsyncOpenAI(
+            api_key=api_key or None, base_url=base_url or None, max_retries=0, timeout=timeout_s
+        )
 
     @staticmethod
     def _messages(system: str, messages: list[Msg]) -> list[dict[str, Any]]:

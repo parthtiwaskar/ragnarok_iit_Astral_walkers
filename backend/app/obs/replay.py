@@ -5,55 +5,20 @@ from __future__ import annotations
 import difflib
 import json
 import zipfile
-from datetime import date
 from pathlib import Path
 from typing import Any
 
 from app.briefing.render import render_markdown
-from app.briefing.validate import CITATION
 from app.obs.events import read_events_file
 from app.store.repo import Repo
 from app.tools.asof import Clock
-from app.tools.citation import parse_trade_ref, verify_citation
+from app.tools.citation import verify_cite
 from app.tools.exposure import compute
-from app.trial.casefile import CaseFile, DocEvidence, TradeEvidence
+from app.trial.casefile import CaseFile
 
 
 def load_case(case_dir: Path) -> CaseFile:
     return CaseFile.model_validate_json((case_dir / "case_file.json").read_text(encoding="utf-8"))
-
-
-def verify_cite(c: str, repo: Repo, clock: Clock, event_id: str | None) -> bool:
-    m = CITATION.search(c)
-    if not m:
-        return False
-    if m.group(2):
-        ref = parse_trade_ref(f"{m.group(1)}#r{m.group(2)}")
-        row = repo.trade_row(ref[0], ref[1]) if ref else None
-        if ref is None or row is None:
-            return False
-        ev: Any = TradeEvidence(
-            table_id=ref[0],
-            row=ref[1],
-            month=row.month or "",
-            value=row.value,
-            volume=row.volume,
-            quality=row.quality,
-        )  # type: ignore[arg-type]
-        return verify_citation(ev, repo, clock, event_id).valid and (row.month or "") == m.group(3)
-    d = repo.get_doc(m.group(1))
-    if d is None or not d.pub_date:
-        return False
-    ev = DocEvidence(
-        doc_id=d.doc_id,
-        quote=(d.body or d.title or "x")[:120],
-        pub_date=date.fromisoformat(d.pub_date),
-        tier=d.tier or 4,
-        event_id=d.event_id or "",
-    )
-    chk = verify_citation(ev, repo, clock, event_id)
-    blocking = [i for i in chk.issues if i not in ("CORRECTED_AS_OF", "BACKGROUND_ONLY")]
-    return not blocking and d.pub_date == m.group(3)
 
 
 def replay(case_dir: Path, repo: Repo, trade_rule: str = "completed_month") -> dict[str, Any]:

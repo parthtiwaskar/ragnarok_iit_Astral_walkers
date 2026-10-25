@@ -10,19 +10,33 @@ from dataclasses import dataclass, field
 
 from app.ingest.trade_table import TradeRowParsed
 
-_NAMES = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october",
-          "november", "december"]
+_NAMES = [
+    "january",
+    "february",
+    "march",
+    "april",
+    "may",
+    "june",
+    "july",
+    "august",
+    "september",
+    "october",
+    "november",
+    "december",
+]
 MONTHS = {m: i for i, m in enumerate(_NAMES, start=1)} | {m[:3]: i for i, m in enumerate(_NAMES, start=1)}
 PARA = re.compile(r"\[P(\d+)\]")
 MONTH_YEAR = re.compile(r"\b(?:in\s+)?([A-Za-z]{3,9})\.?\s+(\d{4})\b", re.I)
 NUM = r"(?P<num>-?[\d,]*\d(?:\.\d+)?|[^\s\d][^\s,;]*)"
 VALUE = re.compile(
-    r"\bvalue\s+(?:was|of|is|at)\s+(?:(?P<cur>[A-Z]{3})\s*)?" + NUM
+    r"\bvalue\s+(?:was|of|is|at)\s+(?:(?P<cur>[A-Z]{3})\s*)?"
+    + NUM
     + r"(?P<mult>\s?(?:[KMB]n?|million|billion|thousand)\b)?",
     re.I,
 )
 VOLUME = re.compile(
-    r"\bvolume\s+(?:was|of|is|at)\s+" + NUM + r"\s*(?P<unit>tonnes|tons|barrels|units|kg|containers|teu)?", re.I
+    r"\bvolume\s+(?:was|of|is|at)\s+" + NUM + r"\s*(?P<unit>tonnes|tons|barrels|units|kg|containers|teu)?",
+    re.I,
 )
 ROUTE = re.compile(
     r"\broute:\s*([A-Z][\w' -]+?)\s+(?:to|->|→)\s+([A-Z][\w' -]+?)\s*,\s*([a-z][\w -]+?)\s*[.\n]", re.I
@@ -85,7 +99,7 @@ def parse_trade_note(doc_id: str, title: str | None, body: str, min_rows: int = 
             exporter, importer, sector = m.group(1).strip(), m.group(2).strip(), m.group(3).strip().lower()
     note = TradeNote(table_id=doc_id, exporter=exporter, importer=importer, sector=sector, unit="")
     seen: set[str] = set()
-    units: set[str] = set()
+    unit_seen: list[str] = []
     for n, text in paras:
         low = text.lower()
         my = MONTH_YEAR.search(text)
@@ -98,8 +112,8 @@ def parse_trade_note(doc_id: str, title: str | None, body: str, min_rows: int = 
         vm, qm = VALUE.search(text), VOLUME.search(text)
         value, vprob = _number(vm.group("num")) if vm else (None, "missing")
         volume, qprob = _number(qm.group("num")) if qm else (None, "missing")
-        if vm:
-            units.add(f"{(vm.group('cur') or '').upper()} {(vm.group('mult') or '').strip()}".strip())
+        if vm and vprob == "":
+            unit_seen.append(f"{(vm.group('cur') or '').upper()} {(vm.group('mult') or '').strip()}".strip())
         quality, reason = "OK", ""
         if vprob == "bad" or qprob == "bad":
             quality, reason = "BAD_NUMBER", "value/volume not a number"
@@ -114,7 +128,8 @@ def parse_trade_note(doc_id: str, title: str | None, body: str, min_rows: int = 
         note.rows.append(TradeRowParsed(n, month, value, volume, quality, text[:300], reason))
     if len(note.rows) < min_rows:
         return None
-    note.unit = sorted(units)[0] if units else ""
+    counts = [u for u in unit_seen if u]
+    note.unit = max(sorted(set(counts)), key=counts.count) if counts else ""
     ok = sorted(r.value for r in note.rows if r.quality == "OK" and r.value is not None)
     if len(ok) >= 3:
         med = ok[len(ok) // 2]

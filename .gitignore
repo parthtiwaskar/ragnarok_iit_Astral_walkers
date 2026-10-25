@@ -17,6 +17,7 @@ venv/
 # node / frontend
 node_modules/
 frontend/dist/
+*.tsbuildinfo
 
 # generated at runtime (index, private agent memory, case runs)
 data/index/
@@ -25,6 +26,8 @@ data/live_packs/*
 memory/*.sqlite*
 runs/*
 !runs/.gitkeep
+!runs/E5-24322/
+!runs/E5-24322/*
 backend/data/
 backend/memory/
 backend/runs/
@@ -34,3 +37,10 @@ backend/runs/
 Thumbs.db
 .vscode/
 .idea/
+
+# nine_realms local artifacts
+data/runemark.sqlite
+data/memory/
+.pytest_cache/
+__pycache__/
+data/ragnarisk.sqlite*
