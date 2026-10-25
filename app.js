@@ -192,6 +192,7 @@ async function renderInvestigations() {
     </section>`;
   try {
     await refreshCases();
+    if (!document.querySelector("#case-rows")) return; // the user navigated away while cases loaded
     document.querySelector("#case-rows").innerHTML = state.cases.length ? state.cases.map(caseRow).join("") : '<tr><td colspan="5" class="loading-row">No investigations yet.</td></tr>';
     document.querySelector("#case-foot").innerHTML = `<span>${state.cases.length} investigation${state.cases.length === 1 ? "" : "s"}</span><span>Stored in the local database</span>`;
   } catch (error) {

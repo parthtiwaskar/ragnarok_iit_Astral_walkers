@@ -54,16 +54,22 @@ def make_llm(provider: str):
 
     if provider == "anthropic":
         return AnthropicClient(model=os.environ.get("ANTHROPIC_MODEL"), max_tokens=8192)
+    if provider == "deepseek":  # OpenAI-compatible chat completions
+        return OpenAICompatClient(os.environ["DEEPSEEK_API_KEY"], os.environ.get("DEEPSEEK_MODEL", "deepseek-chat"),
+                                  base_url=os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1"),
+                                  max_tokens=4096)
     return OpenAICompatClient(os.environ["GROQ_API_KEY"], os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b"), max_tokens=2500)
 
 
+PROVIDER_KEYS = {"deepseek": "DEEPSEEK_API_KEY", "anthropic": "ANTHROPIC_API_KEY", "groq": "GROQ_API_KEY"}
+
+
 def detect_provider() -> str:
+    """NINE_REALMS_PROVIDER forces one; otherwise the first provider (in PROVIDER_KEYS order) with a key."""
     forced = os.environ.get("NINE_REALMS_PROVIDER", "")
-    if forced in ("anthropic", "groq"):
-        return forced if os.environ.get("ANTHROPIC_API_KEY" if forced == "anthropic" else "GROQ_API_KEY") else ""
-    if os.environ.get("ANTHROPIC_API_KEY"):
-        return "anthropic"
-    return "groq" if os.environ.get("GROQ_API_KEY") else ""
+    if forced in PROVIDER_KEYS:
+        return forced if os.environ.get(PROVIDER_KEYS[forced]) else ""
+    return next((p for p, key in PROVIDER_KEYS.items() if os.environ.get(key)), "")
 
 
 class App:
@@ -84,7 +90,9 @@ class App:
     def _run(self, case_id: str, question: str, as_of: str, options: dict[str, int]) -> None:
         try:
             bus = EventBus(sink=lambda ev: self.store.add_event(case_id, ev))
-            base = {"max_llm_calls": 150} if self.provider == "anthropic" else {"max_llm_calls": 150, "max_tool_result_chars": 3500, "max_context_chars": 13000}
+            # small-context providers get trimmed tool results; Anthropic and DeepSeek (128k context) do not
+            base = ({"max_llm_calls": 150} if self.provider in ("anthropic", "deepseek")
+                    else {"max_llm_calls": 150, "max_tool_result_chars": 3500, "max_context_chars": 13000})
             lim = Limits(**base, **options)
             thing = Thing(make_llm(self.provider), self.corpus, limits=lim, bus=bus, memory_dir=self.memory_dir,
                           on_update=lambda c: self.store.save_case(c.to_dict(), self.provider))
@@ -229,7 +237,7 @@ def main(argv: list[str] | None = None) -> int:
     provider = detect_provider()
     app = App(corpus, store, args.memory_dir, provider, args.port)
     print(f"corpus: {corpus.stats()}\nstore:  {store.counts()}")
-    print(f"live trials: {'enabled via ' + provider if provider else 'DISABLED (no ANTHROPIC_API_KEY / GROQ_API_KEY in the environment)'}")
+    print(f"live trials: {'enabled via ' + provider if provider else 'DISABLED (no DEEPSEEK_API_KEY / ANTHROPIC_API_KEY / GROQ_API_KEY in the environment)'}")
     httpd = ThreadingHTTPServer((args.host, args.port), make_handler(app))
     print(f"serving http://{args.host}:{args.port}")
     try:
