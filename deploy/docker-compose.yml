@@ -1,0 +1,37 @@
+# From the repository root:   docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d --build
+services:
+  ragnarisk:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      args:
+        PACK_DIR: ${PACK_DIR:-data/runemark}
+    image: ragnarisk:latest
+    environment:
+      APP_ACCESS_TOKEN: ${APP_ACCESS_TOKEN:?set APP_ACCESS_TOKEN in deploy/.env (python -c "import secrets;print(secrets.token_urlsafe(32))")}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-sonnet-5-5}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      GROQ_MODEL: ${GROQ_MODEL:-openai/gpt-oss-120b}
+      NINE_REALMS_PROVIDER: ${NINE_REALMS_PROVIDER:-}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
+      TRUST_PROXY: ${TRUST_PROXY:-0}
+      MAX_TRIALS_PER_DAY: ${MAX_TRIALS_PER_DAY:-20}
+      TRIAL_COOLDOWN_SECONDS: ${TRIAL_COOLDOWN_SECONDS:-30}
+      MAX_LLM_CALLS: ${MAX_LLM_CALLS:-150}
+      MAX_CASE_TOKENS: ${MAX_CASE_TOKENS:-1000000}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    ports:
+      - "${PORT:-8765}:8765"
+    volumes:
+      - ragnarisk-data:/data
+    restart: unless-stopped
+    user: "10001:10001"   # already unprivileged, so the entrypoint skips its root-only disk fix
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+volumes:
+  ragnarisk-data:

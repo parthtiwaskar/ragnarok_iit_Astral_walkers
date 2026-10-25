@@ -113,6 +113,11 @@ class Store:
                 (_J(["The server stopped while this trial was running."]), time.time(), keep))
             return cur.rowcount
 
+    def count_started_since(self, ts: float) -> int:
+        """Trials started since `ts` (imported historical runs do not count). Drives the daily spending cap."""
+        with self._lock:
+            return int(self.db.execute("SELECT COUNT(*) FROM cases WHERE created_at >= ? AND provider != 'imported'", (ts,)).fetchone()[0])
+
     def delete_case(self, case_id: str) -> None:
         with self._lock, self.db:
             for t in ("cases", "runs", "claims", "evidence", "attacks", "responses", "rulings", "ranges", "events"):

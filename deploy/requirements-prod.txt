@@ -1,0 +1,5 @@
+# Runtime dependencies, pinned to the versions the test suite ran against.
+anthropic==2.3.0
+pypdf==6.21.2
+python-docx==1.2.0
+fastembed==0.9.1   # semantic search (bge-small). Without it the built-in embedder is used.

@@ -30,9 +30,25 @@ function escapeHtml(value) {
   return String(value ?? "").replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]);
 }
 
+const TOKEN_KEY = "ragnarisk-token";
+const getToken = () => { try { return sessionStorage.getItem(TOKEN_KEY) || ""; } catch { return ""; } };
+
+function askToken(message = "") {
+  const backdrop = document.querySelector("#token-backdrop");
+  const error = document.querySelector("#token-error");
+  if (message) { error.hidden = false; error.textContent = message; }  // later 401s from parallel requests must not erase it
+  backdrop.hidden = false;
+  document.querySelector("#token-input").focus();
+}
+
 async function api(path, options = {}) {
-  const response = await fetch(`/api${path}`, { cache: "no-store", headers: { "Content-Type": "application/json" }, ...options });
+  const token = getToken();
+  const response = await fetch(`/api${path}`, { cache: "no-store", ...options, headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(options.headers || {}) } });
   const body = await response.json().catch(() => ({}));
+  if (response.status === 401) {
+    try { sessionStorage.removeItem(TOKEN_KEY); } catch { /* storage may be unavailable */ }
+    askToken(token ? "That token was not accepted." : "");
+  }
   if (!response.ok) {
     const error = new Error(body.error || `Request failed (${response.status}).`);
     error.status = response.status;
@@ -711,6 +727,12 @@ document.addEventListener("click", (event) => {
 });
 
 document.addEventListener("submit", (event) => {
+  if (event.target.id === "token-form") {
+    event.preventDefault();
+    try { sessionStorage.setItem(TOKEN_KEY, document.querySelector("#token-input").value.trim()); } catch { /* storage may be unavailable */ }
+    window.location.reload();
+    return;
+  }
   if (event.target.id !== "investigation-form") return;
   event.preventDefault();
   submitInvestigation(document.querySelector("#investigation-query").value);
@@ -745,6 +767,7 @@ window.addEventListener("hashchange", () => {
   else hydrateOverview();
   try {
     const health = await api("/health");
+    if (health.auth_required && !getToken()) askToken();
     state.canRun = !!health.provider;
     if (health.running) { state.caseId = health.running; startPolling(health.running); }
   } catch { /* server unreachable: pages show their own errors */ }
