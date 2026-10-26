@@ -11,7 +11,7 @@ let activeQuestion = sessionStorage.getItem("ragnarisk-active-question") || SAMP
 
 const state = { caseId: sessionStorage.getItem("ragnarisk-case") || "", cases: [], running: null, canRun: false, live: [], lastSeq: -1, timer: null, feed: [], feedTimer: null, run: null,
   answerId: sessionStorage.getItem("ragnarisk-answer") || "", asOf: "", askNotice: "",
-  askMode: sessionStorage.getItem("ragnarisk-mode") === "full" ? "full" : "fast",
+  askMode: sessionStorage.getItem("ragnarisk-mode") === "fast" ? "fast" : "full",  // Full trial is the default: only it shows a remand and a second run
   answerView: sessionStorage.getItem("ragnarisk-view") === "complete" ? "complete" : "summary", histQ: "" };
 // Fast answer: per-trial limits the server already accepts (OPTION_RANGES). One run, so no remand.
 const FAST_OPTIONS = { min_runs: 1, max_runs: 1, max_claims_per_side: 3, max_steps_per_turn: 5 };
@@ -927,7 +927,7 @@ function renderAsk() {
         <textarea id="ask-query" rows="3" placeholder="For example: how exposed is Midgard to the end of the Orvan corridor agreement?">${escapeHtml(activeQuestion)}</textarea>
         <fieldset class="ask-mode"><legend class="sr-only">How thorough</legend>
           <label><input type="radio" name="ask-mode" value="fast" ${state.askMode === "fast" ? "checked" : ""} /> <span><b>Fast answer</b><small>One trial run, fewer claims per side. Quicker.</small></span></label>
-          <label><input type="radio" name="ask-mode" value="full" ${state.askMode === "full" ? "checked" : ""} /> <span><b>Full trial</b><small>Two runs with Odin's remand. Most rigorous, slower.</small></span></label>
+          <label><input type="radio" name="ask-mode" value="full" ${state.askMode === "full" ? "checked" : ""} /> <span><b>Full trial</b><small>Two runs with Odin's remand. Most rigorous, slower. Recommended.</small></span></label>
         </fieldset>
         <div class="ask-row">
           <label class="ask-date">As of <input type="date" id="ask-asof" value="${escapeHtml(state.asOf)}" /></label>

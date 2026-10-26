@@ -90,11 +90,20 @@ The dry run is scripted. It proves the pipeline and the acceptance checker; it s
 
 ## 3a. Producing the submission log (the one real two-run case)
 
-1. Put one key in `.env` (`ANTHROPIC_API_KEY`, `DEEPSEEK_API_KEY` or `OPENAI_API_KEY`; set `NINE_REALMS_PROVIDER` if several are present). Groq's free tier cannot finish a case.
-2. `python -m nine_realms.server`, open the dashboard, choose **Full trial** on the Ask screen (the default is *Fast answer*, which is one run and cannot meet criterion #8), and ask the sample question. Wait for `COMPLETE` with two runs.
-3. Check it: `python -m nine_realms.acceptance <case_id>` should show 9 passed and 1 manual (#7). Read the debate scorecard and the unit line in the briefing.
-4. Save it: `python -m nine_realms.export <case_id>` writes `runs/<case_id>/` with `case.json`, `events.jsonl`, `briefing.md` and `acceptance.json`. Commit that folder (it holds no keys).
-5. If the case ended `INCOMPLETE` (limit, outage, or Odin satisfied after one run), do not submit it: rerun. A case that is satisfied after run 1 has no second run; ask a question that needs more evidence, or check Odin's sufficiency reasons.
+One command does it all:
+
+```bash
+# 1. put ONE key in .env: DEEPSEEK_API_KEY, ANTHROPIC_API_KEY or OPENAI_API_KEY (NINE_REALMS_PROVIDER if several). Groq's free tier cannot finish a case.
+# 2. raise the per-case cap if the provider reports cost: MAX_CASE_USD in .env, or --max-usd below
+python -m nine_realms.realrun --max-usd 6
+```
+
+It checks the key with one tiny request, runs the sample question as a **Full trial** (the Fast answer mode is one run and can never meet criterion #8), prints the debate as it happens,
+then checks the saved case. It writes `runs/<case_id>/` (`case.json`, `events.jsonl`, `briefing.md`, `acceptance.json`) **only if** the case is COMPLETE, has at least two runs
+and no failed criterion. Otherwise it says exactly what is missing, writes nothing, and exits non-zero, so a half-finished case cannot be mistaken for the log.
+Commit the folder (it holds no keys). After it succeeds, read the briefing's unit line and the debate scorecard by eye.
+
+The same result can be had by hand: Ask screen, **Full trial**, then `python -m nine_realms.acceptance <case_id>` (expect 9 passed, 1 manual) and `python -m nine_realms.export <case_id>`.
 
 ## 4. Cost and time budget
 
