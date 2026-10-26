@@ -11,7 +11,8 @@ let activeQuestion = sessionStorage.getItem("ragnarisk-active-question") || SAMP
 
 const state = { caseId: sessionStorage.getItem("ragnarisk-case") || "", cases: [], running: null, canRun: false, live: [], lastSeq: -1, timer: null, feed: [], feedTimer: null, run: null,
   answerId: sessionStorage.getItem("ragnarisk-answer") || "", asOf: "", askNotice: "",
-  askMode: sessionStorage.getItem("ragnarisk-mode") === "full" ? "full" : "fast" };
+  askMode: sessionStorage.getItem("ragnarisk-mode") === "full" ? "full" : "fast",
+  answerView: sessionStorage.getItem("ragnarisk-view") === "complete" ? "complete" : "summary", histQ: "" };
 // Fast answer: per-trial limits the server already accepts (OPTION_RANGES). One run, so no remand.
 const FAST_OPTIONS = { min_runs: 1, max_runs: 1, max_claims_per_side: 3, max_steps_per_turn: 5 };
 
@@ -80,6 +81,7 @@ async function refreshCases() {
   state.cases = data.cases;
   state.running = data.running;
   if (!state.caseId || !state.cases.some((c) => c.case_id === state.caseId)) state.caseId = (state.cases.find((c) => c.rulings > 0) || state.cases[0])?.case_id || "";
+  if (document.querySelector("#hist-list")) renderHistoryList();
   return state.cases;
 }
 
@@ -355,6 +357,17 @@ function claimCard(run, claim) {
   return `<article class="claim" data-status="${status}"><header><span class="claim-id">${escapeHtml(claim.id)}</span><span class="badge">${escapeHtml(claim.kind)}</span>${rulingPill(status)}</header><p class="clamp">${escapeHtml(claim.text)}</p>${claim.text.length > 260 ? '<button class="more-btn" data-action="toggle-clamp">Show more</button>' : ""}${est}<div class="cites">${chips}</div>${ruling?.rationale ? `<details class="why"><summary>Odin's reasoning</summary><p>${escapeHtml(ruling.rationale)}</p></details>` : ""}</article>`;
 }
 
+function crossExamRows(run) {
+  return Object.values(run.attacks).map((a) => {
+    const r = run.responses[a.id];
+    return `<div class="xexam"><div><span class="who who-${a.by.toLowerCase()}">${escapeHtml(a.by)}</span> attacked <b>${escapeHtml(a.target_claim_id)}</b> <span class="badge">${escapeHtml(a.kind)}</span><p>${escapeHtml(a.text)}</p></div><div>${r ? `<span class="rpill r-${r.action === "CONCEDE" ? "conceded" : r.action === "REVISE" ? "revised" : "established"}">${r.action === "CONCEDE" ? "conceded" : r.action === "REVISE" ? "revised" : "defended"}</span><p>${escapeHtml(r.text)}${r.note ? ` <i>(${escapeHtml(r.note)})</i>` : ""}</p>` : '<span class="rpill r-unruled">unanswered</span>'}</div></div>`;
+  }).join("");
+}
+
+function runRows(run) {
+  return run.runs.map((r) => `<div class="run-row"><b>Run ${r.run}</b><span>${r.claims.length} claims · ${r.attacks.length} attacks · ${r.rulings.length} rulings${r.new_doc_ids.length ? ` · ${r.new_doc_ids.length} new document(s)` : ""}</span><span class="rpill r-${r.sufficient ? "established" : r.sufficient === false ? "contested" : "unruled"}">${r.sufficient ? "sufficient" : r.sufficient === false ? "sent back" : "not judged"}</span>${r.deficiencies.length ? `<ul>${r.deficiencies.map((d) => `<li>${escapeHtml(d)}</li>`).join("")}</ul>` : ""}${r.failures.length ? `<p class="rating-note">${escapeHtml(friendlyReason(r.failures))}</p>` : ""}${debateLine(r.debate)}</div>`).join("");
+}
+
 async function renderCouncil() {
   if (!state.caseId) {
     try { await refreshCases(); } catch { /* handled below */ }
@@ -371,13 +384,9 @@ async function renderCouncil() {
     const col = (side) => claims.filter((c) => c.side === side).map((c) => claimCard(run, c)).join("") || '<p class="rating-note">No claims from this side.</p>';
     const running = state.running === state.caseId;
     const live = state.live.slice(-8).map((t) => `<li>${escapeHtml(t)}</li>`).join("");
-    const attacks = Object.values(run.attacks).map((a) => {
-      const r = run.responses[a.id];
-      const target = run.claims[a.target_claim_id];
-      return `<div class="xexam"><div><span class="who who-${a.by.toLowerCase()}">${escapeHtml(a.by)}</span> attacked <b>${escapeHtml(a.target_claim_id)}</b> <span class="badge">${escapeHtml(a.kind)}</span><p>${escapeHtml(a.text)}</p></div><div>${r ? `<span class="rpill r-${r.action === "CONCEDE" ? "conceded" : r.action === "REVISE" ? "revised" : "established"}">${r.action === "CONCEDE" ? "conceded" : r.action === "REVISE" ? "revised" : "defended"}</span><p>${escapeHtml(r.text)}${r.note ? ` <i>(${escapeHtml(r.note)})</i>` : ""}</p>` : '<span class="rpill r-unruled">unanswered</span>'}${target ? "" : ""}</div></div>`;
-    }).join("");
+    const attacks = crossExamRows(run);
     const flags = (run.red_flags || []).slice(0, 10).map((f) => `<span class="flag-chip" title="${escapeHtml(f.note || "")}">${escapeHtml(f.doc_id)} · ${escapeHtml(f.type)}</span>`).join("");
-    const runs = run.runs.map((r) => `<div class="run-row"><b>Run ${r.run}</b><span>${r.claims.length} claims · ${r.attacks.length} attacks · ${r.rulings.length} rulings${r.new_doc_ids.length ? ` · ${r.new_doc_ids.length} new document(s)` : ""}</span><span class="rpill r-${r.sufficient ? "established" : r.sufficient === false ? "contested" : "unruled"}">${r.sufficient ? "sufficient" : r.sufficient === false ? "sent back" : "not judged"}</span>${r.deficiencies.length ? `<ul>${r.deficiencies.map((d) => `<li>${escapeHtml(d)}</li>`).join("")}</ul>` : ""}${r.failures.length ? `<p class="rating-note">${escapeHtml(friendlyReason(r.failures))}</p>` : ""}${debateLine(r.debate)}</div>`).join("");
+    const runs = runRows(run);
     content.innerHTML = `
       <section class="page-heading">
         <div><div class="eyebrow"><span class="live-dot"></span> INTELLIGENCE <span class="eyebrow-divider">/</span> ADVERSARIAL REVIEW</div><h1>Agent council</h1><p class="page-subtitle">${escapeHtml(run.question)}</p></div>
@@ -605,8 +614,12 @@ function downloadBriefing() {
 
 // ---- charts -----------------------------------------------------------------------
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-const COLORS = { cyan: "#67ddf4", amber: "#ffca82", violet: "#b29aff", green: "#60ddb1", rose: "#ff8f9d", grey: "#5e6d83", orange: "#ff9f6b" };
-const STATUS_COLORS = { established: COLORS.green, contested: COLORS.amber, conceded: COLORS.violet, rejected: COLORS.rose, revised: COLORS.cyan, unruled: COLORS.grey };
+// Chart colours come from the CSS tokens, so they follow light and dark mode (they are read each time a chart is drawn).
+const cssVar = (name, fallback) => getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback;
+const COLORS = { get cyan() { return cssVar("--cyan", "#67ddf4"); }, get amber() { return cssVar("--amber", "#ffca82"); }, get violet() { return cssVar("--violet", "#b29aff"); },
+  get green() { return cssVar("--green", "#60ddb1"); }, get rose() { return cssVar("--rose", "#ff8f9d"); }, get grey() { return cssVar("--subtle", "#5e6d83"); }, get orange() { return cssVar("--r-high", "#ff9f6b"); } };
+const STATUS_COLORS = { get established() { return COLORS.green; }, get contested() { return COLORS.amber; }, get conceded() { return COLORS.violet; }, get rejected() { return COLORS.rose; },
+  get revised() { return COLORS.cyan; }, get unruled() { return COLORS.grey; } };
 const nfmt = new Intl.NumberFormat("en-GB");
 state.charts = [];
 const track = (chart) => { state.charts.push(chart); return chart; };
@@ -727,7 +740,7 @@ function renderExposureChart(root, run) {
   draw();
 }
 
-const TIER_COLORS = { 1: COLORS.green, 2: COLORS.cyan, 3: COLORS.amber, 4: COLORS.rose };
+const TIER_COLORS = { get 1() { return COLORS.green; }, get 2() { return COLORS.cyan; }, get 3() { return COLORS.amber; }, get 4() { return COLORS.rose; } };
 async function renderDocTimeline(root) {
   if (!root || !window.Charts) return;
   root.innerHTML = `<div class="chart-head"><div><span class="section-kicker">TIMELINE</span><h2>When sources were published</h2></div><span id="month-chip"></span></div><div class="ch-slot"></div><div class="legend">${[1, 2, 3, 4].map((t) => `<span style="display:inline-flex;align-items:center;gap:7px;color:var(--muted);font-size:12px"><i style="width:10px;height:10px;border-radius:3px;background:${TIER_COLORS[t]}"></i>Tier ${t}</span>`).join("")}</div><p class="chart-note">Click a bar to filter the list to that month. Atlas reference sheets are left out.</p>`;
@@ -856,16 +869,55 @@ async function renderIntake(root) {
 // ---- ask: the first screen (question in, answer with evidence out) ---------------
 const normQ = (q) => String(q || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 
-function recentAnswers() {
-  const recent = state.cases.filter((c) => c.rulings > 0).slice(0, 4);
-  if (!recent.length) return "";
-  return `<span class="ask-recent-label">Recent answers</span>${recent.map((c) =>
-    `<button class="ask-recent-item" data-action="show-answer" data-case="${escapeHtml(c.case_id)}"><span>${escapeHtml((c.question || "").replace(/^As of [^,]+,\s*/i, "").replace(/^\w/, (ch) => ch.toUpperCase()))}</span><small>${escapeHtml((STATUS[c.status] || [0, c.status])[1])} · as of ${escapeHtml(fmtDate(c.as_of))}</small></button>`).join("")}`;
+// ---- Ask: history sidebar ---------------------------------------------------------
+function historyGroup(c) {
+  if (state.running === c.case_id || c.status === "OPEN") return "Running";
+  const days = Math.floor((Date.now() / 1000 - (c.updated_at || 0)) / 86400);
+  return days < 1 ? "Today" : days < 2 ? "Yesterday" : days < 8 ? "Last 7 days" : "Older";
+}
+
+function historyItem(c) {
+  const running = state.running === c.case_id;
+  const key = running ? "open" : (STATUS[c.status] || ["pending"])[0];
+  const label = running ? "Running" : (STATUS[c.status] || [0, c.status])[1];
+  const runs = c.runs === 1 ? "1 run" : `${c.runs} runs`;
+  return `<button class="hist-item${c.case_id === state.answerId ? " active" : ""}" data-action="show-answer" data-case="${escapeHtml(c.case_id)}" title="${escapeHtml(c.question || "")}"><span class="hist-q">${escapeHtml(caseTitle(c) || c.case_id)}</span><span class="hist-meta"><i class="hist-dot s-${key}"></i>${escapeHtml(label)}<span>${runs}</span><span>as of ${escapeHtml(fmtDate(c.as_of))}</span></span></button>`;
+}
+
+function renderHistoryList() {
+  const list = document.querySelector("#hist-list");
+  if (!list) return;
+  const q = normQ(state.histQ);
+  const items = state.cases.filter((c) => !q || normQ(c.question + " " + c.case_id).includes(q));
+  if (!items.length) {
+    list.innerHTML = `<p class="hist-empty">${state.cases.length ? "No question matches your search." : "Your questions will appear here. Each one is kept with its evidence and rulings."}</p>`;
+    return;
+  }
+  const order = ["Running", "Today", "Yesterday", "Last 7 days", "Older"];
+  const groups = new Map(order.map((g) => [g, []]));
+  items.forEach((c) => groups.get(historyGroup(c)).push(c));
+  list.innerHTML = order.filter((g) => groups.get(g).length).map((g) => `<div class="hist-group"><span class="hist-label">${g}</span>${groups.get(g).map(historyItem).join("")}</div>`).join("");
+}
+
+function historySidebar() {
+  return `<aside class="ask-history" aria-label="Question history">
+    <div class="hist-top"><button class="button button-primary hist-new" data-action="ask-again"><span class="button-plus">＋</span> New question</button>
+      <button class="hist-collapse" type="button" data-action="collapse-history" aria-label="Collapse or expand history" title="Collapse or expand history"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 6-6 6 6 6"/></svg></button></div>
+    <input class="hist-search" id="hist-search" type="search" placeholder="Search your questions" value="${escapeHtml(state.histQ)}" aria-label="Search your questions" />
+    <div id="hist-list"></div>
+  </aside>`;
 }
 
 function renderAsk() {
   const answering = state.answerId && state.running === state.answerId;
+  let collapsed = false;
+  try { collapsed = localStorage.getItem("ragnarisk-history") === "collapsed"; } catch { /* default open */ }
   content.innerHTML = `
+    <div class="ask-layout${collapsed ? " collapsed" : ""}">
+    ${historySidebar()}
+    <button class="hist-backdrop" type="button" data-action="toggle-history" aria-label="Close history"></button>
+    <div class="ask-main">
+    <button class="button button-quiet history-btn" type="button" data-action="toggle-history">☰ History</button>
     <section class="ask-hero${state.answerId ? " has-answer" : ""}">
       <span class="ask-badge"><i></i> Adversarial AI · every number traced to a source</span>
       <h1>Ask about a <span class="grad">supply-chain disruption</span></h1>
@@ -890,10 +942,12 @@ function renderAsk() {
         <li><span class="how-icons"><span class="how-ico o">O</span></span><b>Rule</b><small>Odin judges every claim; code bounds the range</small></li>
         <li><span class="how-icons"><span class="how-ico r">▤</span></span><b>Report</b><small>Answer, evidence and a PDF you can hand over</small></li>
       </ol>
-      <div class="ask-recent" id="ask-recent">${recentAnswers()}</div>
     </section>
-    <section class="answer" id="answer" aria-live="polite"></section>`;
-  if (!state.cases.length) refreshCases().then(() => { const el = document.querySelector("#ask-recent"); if (el) el.innerHTML = recentAnswers(); }).catch(() => {});
+    <section class="answer" id="answer" aria-live="polite"></section>
+    </div>
+    </div>`;
+  renderHistoryList();
+  if (!state.cases.length) refreshCases().catch(() => {});
   if (!state.asOf) api("/health").then((h) => { state.asOf = h.as_of_default || ""; const el = document.querySelector("#ask-asof"); if (el && !el.value) el.value = state.asOf; }).catch(() => {});
   if (answering) document.querySelector("#answer").innerHTML = progressMarkup();
   else if (state.answerId) showAnswer(state.answerId, { scroll: false });
@@ -948,6 +1002,7 @@ async function showAnswer(id, { scroll = true } = {}) {
     const info = await loadCase(id, true);
     if (state.answerId !== id) return;
     root.innerHTML = answerMarkup(info.case);
+    root.classList.toggle("wide", state.answerView === "complete" && ["COMPLETE", "INCOMPLETE"].includes(info.case.status));
     [...root.children].forEach((el, i) => el.style.setProperty("--i", i));  // staggered reveal
     root.classList.remove("reveal");
     void root.offsetWidth;
@@ -1037,6 +1092,43 @@ function rigorStats(run) {
   return `<div class="rigor">${stats.map(([n, one, many]) => `<span><b>${n}</b>${n === 1 ? one : many || `${one}s`}</span>`).join("")}</div>`;
 }
 
+// The complete view: the whole case on one page, so nobody has to leave the Ask section to audit an answer.
+function completeBody(run, { rows, provisional }) {
+  const claims = Object.values(run.claims || {});
+  const col = (side) => claims.filter((c) => c.side === side).map((c) => claimCard(run, c)).join("") || '<p class="rating-note">No claims from this side.</p>';
+  const brief = run.briefing || {};
+  const attacks = Object.keys(run.attacks || {}).length;
+  const flags = run.red_flags || [];
+  const byDoc = new Map();
+  claims.forEach((c) => c.evidence.forEach((e) => { const row = byDoc.get(e.doc_id) || { e, claims: new Set(), quotes: [] }; row.claims.add(c.id); if (row.quotes.length < 2 && !row.quotes.includes(e.quote)) row.quotes.push(e.quote); byDoc.set(e.doc_id, row); }));
+  const sources = [...byDoc.values()].sort((x, y) => x.e.doc_id.localeCompare(y.e.doc_id)).map(({ e, claims: ids, quotes }) =>
+    `<tr><td><button class="chip-btn" data-action="open-doc" data-doc="${escapeHtml(e.doc_id)}">${escapeHtml(e.doc_id)}</button></td><td>Tier ${escapeHtml(e.tier ?? "?")}</td><td>${escapeHtml(e.date || "undated")}</td><td>${[...ids].map(escapeHtml).join(", ")}</td><td class="src-q">${quotes.map((q) => `“${escapeHtml(q.slice(0, 160))}${q.length > 160 ? "…" : ""}”`).join("<br>")}</td></tr>`).join("");
+  queueMicrotask(() => {
+    renderExposureChart(document.querySelector("#exposure-chart"), run);
+    renderTradeCard(document.querySelector("#trade-card-complete"), run.scope);
+    renderAcceptance(document.querySelector("#acceptance"), run.case_id);
+  });
+  return `${verdict(rows)}
+    ${rigorStats(run)}
+    ${provisional}
+    <ul class="ans-rows" id="j-ranges">${rows.length ? rows.map(answerRow).join("") : '<li class="ans-row rating-none"><span class="ans-sides">No ranges were ruled.</span></li>'}</ul>
+    <section class="complete-section" id="j-table"><h2>Exposure table</h2><p class="hint">Low and high bounds for each country and sector. Unit: ${escapeHtml(run.unit || "% fall in imports")}.</p><div style="overflow-x:auto">${rows.length ? exposureTable(rows, run.unit) : '<p class="rating-note">No ranges were ruled.</p>'}</div><div id="exposure-chart" class="chart-card" style="margin-top:14px"></div></section>
+    <section class="complete-section" id="j-trial"><h2>Thor vs Loki <em>${claims.length} claims</em></h2><p class="hint">Sealed first round. Each claim carries its sources; a pill shows what Odin ruled.</p>${claims.length ? statusBars(run) : ""}
+      <div class="trial-cols"><div><h2><span class="agent-avatar thor">T</span> Thor <small>argues high exposure</small></h2>${col("THOR")}</div><div><h2><span class="agent-avatar loki">L</span> Loki <small>argues limited exposure</small></h2>${col("LOKI")}</div></div></section>
+    ${attacks ? `<section class="complete-section" id="j-xexam"><h2>Cross-examination <em>${attacks}</em></h2><p class="hint">Each side attacks the other's claims. A defence needs new evidence, or it is a concession.</p>${crossExamRows(run)}</section>` : ""}
+    <section class="complete-section" id="j-rulings"><h2><span class="agent-avatar odin">O</span> Odin's rulings by run</h2>${runRows(run) || '<p class="rating-note">No run has finished yet.</p>'}</section>
+    <section class="complete-section" id="j-brief"><h2>Briefing</h2>${brief.executive_summary ? `<p class="hint" style="color:var(--text);font-size:14px">${escapeHtml(brief.executive_summary)}</p>` : ""}
+      ${findingsSection(run, "Established", "Sourced facts and findings that survived cross-examination.", brief.established, true)}
+      ${findingsSection(run, "Disputed", "Credible sources disagree. Not settled.", brief.contested, true)}
+      ${findingsSection(run, "Conceded or rejected", "Claims a side conceded, or Odin rejected.", brief.conceded, true)}
+      ${flags.length ? `<h3 style="margin:16px 0 6px;font:600 14px var(--display)">Traps caught <em style="font-style:normal;color:var(--subtle)">${flags.length}</em></h3><ul class="trap-list">${flags.map((f) => `<li><button class="chip-btn" data-action="open-doc" data-doc="${escapeHtml(f.doc_id)}">${escapeHtml(f.doc_id)}</button><span class="trap-type">${escapeHtml(String(f.type).replace(/_/g, " "))}</span><span>${escapeHtml(f.note)}</span></li>`).join("")}</ul>` : ""}
+      ${brief.outlook ? `<h3 style="margin:16px 0 6px;font:600 14px var(--display)">Next-quarter outlook</h3><div class="outlook"><p>${escapeHtml(brief.outlook.text)}</p><ul>${(brief.outlook.assumptions || []).map((a) => `<li>${escapeHtml(a)}</li>`).join("")}</ul></div>` : ""}</section>
+    <section class="complete-section" id="j-trade"><div id="trade-card-complete" class="chart-card"></div></section>
+    <section class="complete-section" id="j-sources"><h2>All sources <em>${byDoc.size}</em></h2><p class="hint">Every document the claims cite. Click an ID to open the exact passage or trade row.</p>
+      <div style="overflow-x:auto"><table class="src-table"><thead><tr><th>Document</th><th>Tier</th><th>Published</th><th>Cited by</th><th>Quoted</th></tr></thead><tbody>${sources}</tbody></table></div></section>
+    <section class="complete-section" id="j-accept"><div id="acceptance" class="chart-card"></div></section>`;
+}
+
 function answerMarkup(run) {
   const head = `<header class="answer-head"><span class="answer-kicker">Answer</span><p class="answer-q">${escapeHtml(run.question)}</p>
     <div class="answer-meta">${statusBadge(run.status)}${run.verified ? '<span class="verified">✓ Event verified</span>' : ""}${(run.runs || []).length === 1 ? "<span>Fast answer · 1 trial run</span>" : ""}<span>As of ${escapeHtml(fmtDate(run.as_of))}</span><span>Case ${escapeHtml(run.case_id)}</span>${run.provider === "imported" ? "<span>Saved trial</span>" : ""}</div></header>`;
@@ -1050,13 +1142,16 @@ function answerMarkup(run) {
   const findings = establishedFindings(run);
   const flags = run.red_flags || [];
   const summary = answerSummary(run);
+  const complete = state.answerView === "complete";
+  const toggle = `<div class="view-toggle" role="group" aria-label="Answer view"><button type="button" class="${complete ? "" : "on"}" data-action="answer-view" data-view="summary" aria-pressed="${!complete}">Summary</button><button type="button" class="${complete ? "on" : ""}" data-action="answer-view" data-view="complete" aria-pressed="${complete}">Complete view</button></div>`;
   const trap = (f) => `<li><button class="chip-btn" data-action="open-doc" data-doc="${escapeHtml(f.doc_id)}">${escapeHtml(f.doc_id)}</button><span class="trap-type">${escapeHtml(String(f.type).replace(/_/g, " "))}</span><span>${escapeHtml(f.note)}</span></li>`;
   const provisional = run.status !== "COMPLETE"
     ? `<p class="answer-flag"><b>Provisional.</b> ${escapeHtml(friendlyReason(run.status_reasons))} The ranges come from the rulings that were made.</p>` : "";
   const disputed = findingsSection(run, "Disputed", "Credible sources disagree. Not settled.", run.briefing?.contested, false);
   const ruledOut = findingsSection(run, "Ruled out", "Claims a side conceded, or Odin rejected.", run.briefing?.conceded, false);
-  const jumps = [["ranges", "Ranges"], summary && ["summary", summary[0]], ["evidence", "Evidence"], flags.length && ["traps", "Traps caught"],
-    disputed && ["disputed", "Disputed"], ruledOut && ["ruled", "Ruled out"]].filter(Boolean);
+  const jumps = (complete
+    ? [["ranges", "Ranges"], ["table", "Exposure table"], ["trial", "Thor vs Loki"], Object.keys(run.attacks || {}).length && ["xexam", "Cross-examination"], ["rulings", "Odin's rulings"], ["brief", "Briefing"], ["trade", "Trade data"], ["sources", "All sources"], ["accept", "Acceptance"]]
+    : [["ranges", "Ranges"], summary && ["summary", summary[0]], ["evidence", "Evidence"], flags.length && ["traps", "Traps caught"], disputed && ["disputed", "Disputed"], ruledOut && ["ruled", "Ruled out"]]).filter(Boolean);
   const sources = new Set(Object.values(run.claims || {}).flatMap((c) => c.evidence.map((e) => e.doc_id))).size;
   // Actions live in a sticky sidebar beside the answer on wide screens, and below it on phones.
   const side = `<aside class="answer-side" aria-label="Answer actions">
@@ -1075,9 +1170,7 @@ function answerMarkup(run) {
         <div id="side-cost" hidden><dt>AI cost</dt><dd></dd></div>
       </dl>
     </aside>`;
-  return `${head}
-    <div class="answer-grid">
-    <div class="answer-main">
+  const summaryBody = `
     ${verdict(rows)}
     ${rigorStats(run)}
     ${provisional}
@@ -1090,7 +1183,11 @@ function answerMarkup(run) {
       ${flags.length > 5 ? `<details class="more-traps"><summary>Show all ${flags.length}</summary><ul class="trap-list">${flags.slice(5).map(trap).join("")}</ul></details>` : ""}</div>` : ""}
     ${disputed ? `<div id="j-disputed">${disputed}</div>` : ""}
     ${ruledOut ? `<div id="j-ruled">${ruledOut}</div>` : ""}
-    </div>
+`;
+  const body = complete ? completeBody(run, { rows, provisional }) : summaryBody;
+  return `${head}${toggle}
+    <div class="answer-grid">
+    <div class="answer-main">${body}    </div>
     ${side}
     </div>`;
 }
@@ -1180,8 +1277,12 @@ document.addEventListener("click", (event) => {
   switch (d.action) {
     case "new-investigation": navigate("ask"); document.querySelector("#ask-query")?.focus(); break;
     case "ask-example": { const q = document.querySelector("#ask-query"); if (q) { q.value = SAMPLE_QUESTION; activeQuestion = SAMPLE_QUESTION; q.focus(); } break; }
-    case "show-answer": showAnswer(d.case); break;
+    case "show-answer": document.querySelector(".ask-layout")?.classList.remove("history-open"); showAnswer(d.case); break;
     case "ask-again": state.answerId = ""; state.askNotice = ""; sessionStorage.removeItem("ragnarisk-answer"); history.replaceState(null, "", "#ask"); renderAsk(); document.querySelector("#ask-query")?.focus(); break;
+    case "toggle-theme": window.RagnariskTheme?.set(window.RagnariskTheme.get() === "light" ? "dark" : "light"); break;
+    case "answer-view": state.answerView = d.view === "complete" ? "complete" : "summary"; try { sessionStorage.setItem("ragnarisk-view", state.answerView); } catch { /* optional */ } if (state.answerId) showAnswer(state.answerId, { scroll: false }); break;
+    case "toggle-history": document.querySelector(".ask-layout")?.classList.toggle("history-open"); break;
+    case "collapse-history": { const on = document.querySelector(".ask-layout")?.classList.toggle("collapsed"); try { localStorage.setItem("ragnarisk-history", on ? "collapsed" : "open"); } catch { /* optional */ } break; }
     case "download-report": downloadReport(); break;
     case "close-dialog": closeDialog(); break;
     case "clear-query": document.querySelector("#investigation-query").value = ""; break;
@@ -1223,6 +1324,7 @@ document.addEventListener("input", (event) => {
     activeQuestion = event.target.value;
     sessionStorage.setItem("ragnarisk-active-question", activeQuestion);
   }
+  if (event.target.id === "hist-search") { state.histQ = event.target.value; renderHistoryList(); }
   if (event.target.id === "investigation-query") showAsOf();
   if (event.target.id === "ask-query") {
     const iso = parseAsOf(event.target.value), box = document.querySelector("#ask-asof");
@@ -1275,3 +1377,12 @@ async function prepareLinkedReport() {
     if (health.running) { state.caseId = health.running; startPolling(health.running); }
   } catch { /* server unreachable: pages show their own errors */ }
 })();
+
+// Theme: label the toggle, and redraw charts (their colours are read when drawn).
+function syncThemeButton() {
+  const light = window.RagnariskTheme?.get() === "light";
+  const btn = document.querySelector(".theme-toggle");
+  if (btn) { btn.setAttribute("aria-label", light ? "Switch to dark mode" : "Switch to light mode"); btn.title = light ? "Switch to dark mode" : "Switch to light mode"; }
+}
+document.addEventListener("themechange", () => { syncThemeButton(); renderPage(currentPage()); });
+syncThemeButton();

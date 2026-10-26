@@ -17,7 +17,7 @@ RUN pip install -r requirements-prod.txt
 RUN python -c "from fastembed import TextEmbedding; TextEmbedding('BAAI/bge-small-en-v1.5', cache_dir='/models')"
 
 COPY nine_realms ./nine_realms
-COPY index.html app.js charts.js styles.css ./
+COPY index.html app.js charts.js theme.js styles.css ./
 COPY ${PACK_DIR} ./pack
 COPY runs ./runs
 

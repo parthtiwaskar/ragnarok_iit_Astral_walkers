@@ -71,7 +71,7 @@
         }
         const path = svgEl("path", { d, fill: "none", stroke: s.color, "stroke-width": s.dash ? 1.6 : 2.4, "stroke-linejoin": "round", "stroke-linecap": "round", class: s.dash ? "" : "ch-draw" }, svg);
         if (s.dash) path.setAttribute("stroke-dasharray", s.dash); else path.setAttribute("pathLength", "1");
-        pts.forEach((p) => { if (p) svgEl("circle", { cx: p[0], cy: p[1], r: s.dash ? 2.4 : 3.4, fill: s.dash ? "#090e1a" : s.color, stroke: s.color, "stroke-width": 1.6 }, svg); });
+        pts.forEach((p) => { if (p) svgEl("circle", { cx: p[0], cy: p[1], r: s.dash ? 2.4 : 3.4, fill: s.dash ? (getComputedStyle(document.documentElement).getPropertyValue("--bg").trim() || "#090e1a") : s.color, stroke: s.color, "stroke-width": 1.6 }, svg); });
       });
       const cross = svgEl("line", { y1: m.t, y2: m.t + ih, class: "ch-cross", visibility: "hidden" }, svg);
       const hot = svgEl("g", {}, svg);

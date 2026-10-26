@@ -4,6 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#090e1a" />
+    <meta name="color-scheme" content="dark light" />
     <meta
       name="description"
       content="Ragnarisk is an adversarial intelligence workspace for investigating supply-chain disruptions."
@@ -15,7 +16,8 @@
       href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="./styles.css?v=11" />
+    <script src="./theme.js?v=1"></script>
+    <link rel="stylesheet" href="./styles.css?v=13" />
   </head>
   <body>
     <div class="app-shell">
@@ -39,6 +41,10 @@
             <a class="tab" href="#investigations" data-page="investigations">Cases</a>
             <a class="tab" href="#overview" data-page="overview">Dashboard</a>
           </nav>
+          <button class="theme-toggle" type="button" data-action="toggle-theme" aria-label="Switch to light mode" title="Switch theme">
+            <svg class="ico-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2.5v2.2M12 19.3v2.2M2.5 12h2.2M19.3 12h2.2M5.3 5.3l1.6 1.6M17.1 17.1l1.6 1.6M18.7 5.3l-1.6 1.6M6.9 17.1l-1.6 1.6"/></svg>
+            <svg class="ico-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.2A8 8 0 0 1 9.8 4 8.2 8.2 0 1 0 20 14.2Z"/></svg>
+          </button>
         </header>
 
         <div class="page-content" id="page-content">
@@ -193,6 +199,6 @@
     </div>
     <div class="report-root" id="report-root" aria-hidden="true"></div>
     <script src="./charts.js?v=1"></script>
-    <script src="./app.js?v=12"></script>
+    <script src="./app.js?v=14"></script>
   </body>
 </html>
