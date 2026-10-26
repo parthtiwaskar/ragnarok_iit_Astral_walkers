@@ -87,7 +87,7 @@ class Agent:
             self.bus.emit("llm_call", agent=self.name, run=run, phase=phase, step=step, tokens=resp.tokens, usd=round(resp.cost_usd, 5), context_chars=sum(len(str(m.get('content') or '')) for m in messages))
             if resp.tool_calls and not force_final:
                 messages.append({"role": "assistant", "content": resp.text,
-                                 "tool_calls": [{"id": c.id, "name": c.name, "args": c.args} for c in resp.tool_calls]})
+                                 "tool_calls": [{"id": c.id, "name": c.name, "args": c.args, "extra": c.extra} for c in resp.tool_calls]})
                 for c in resp.tool_calls:
                     if c.name == "search_documents":
                         self.queries.append(str(c.args.get("query", "")))

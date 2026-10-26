@@ -1377,3 +1377,12 @@ html[data-theme="light"] .eyebrow-divider, html[data-theme="light"] .crumb-slash
 html[data-theme="light"] .seg button.on { color: var(--text); }
 html[data-theme="light"] .metric-icon, html[data-theme="light"] .table-case-icon { color: var(--text); }
 html[data-theme="light"] .page-footer, html[data-theme="light"] .page-footer span { color: var(--subtle); }
+/* Retrieval trail */
+.trail-agent { margin: 8px 0; padding: 8px 12px; border: 1px solid var(--border-soft); border-radius: 10px; }
+.trail-agent > summary { cursor: pointer; }
+.trail-agent > summary small { margin-left: 6px; color: var(--subtle); }
+.trail-agent ol { margin: 8px 0 2px; padding-left: 20px; display: grid; gap: 7px; font-size: 13px; line-height: 1.5; }
+.trail-verb { color: var(--muted); }
+.trail-docs { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 4px; color: var(--subtle); align-items: center; }
+.trail-err { color: var(--rose); }
+@media print { .rp-trail { margin: 2px 0 6px; padding-left: 18px; font-size: 8.5pt; color: #333; } }

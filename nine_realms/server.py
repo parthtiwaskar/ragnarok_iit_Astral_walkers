@@ -154,6 +154,14 @@ def make_llm(provider: str):
         return OpenAICompatClient(os.environ["DEEPSEEK_API_KEY"], os.environ.get("DEEPSEEK_MODEL", "deepseek-chat"),
                                   base_url=os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1"),
                                   max_tokens=4096)
+    if provider == "gemini":  # Google AI Studio through its OpenAI-compatible endpoint
+        return OpenAICompatClient(os.environ["GEMINI_API_KEY"], gemini_model(),
+                                  base_url=os.environ.get("GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta/openai"),
+                                  max_tokens=4096)
+    if provider == "github":  # GitHub Models (free with a GitHub account); free tier caps a request near 8k tokens in, 4k out
+        return OpenAICompatClient(os.environ["GITHUB_MODELS_TOKEN"], github_model(),
+                                  base_url=os.environ.get("GITHUB_MODELS_BASE_URL", "https://models.github.ai/inference"),
+                                  max_tokens=3000)
     if provider == "openai":  # OpenAI itself, or any OpenAI-compatible gateway (e.g. OpenRouter) via OPENAI_BASE_URL
         return OpenAICompatClient(os.environ["OPENAI_API_KEY"], openai_model(), base_url=openai_base_url(), max_tokens=4096)
     return OpenAICompatClient(os.environ["GROQ_API_KEY"], os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b"), max_tokens=2500)
@@ -170,9 +178,10 @@ def openai_model() -> str:
 
 
 # Auto-detection order when NINE_REALMS_PROVIDER is empty: the first provider whose key is set wins.
-PROVIDER_KEYS = {"deepseek": "DEEPSEEK_API_KEY", "anthropic": "ANTHROPIC_API_KEY", "openai": "OPENAI_API_KEY", "groq": "GROQ_API_KEY"}
+PROVIDER_KEYS = {"deepseek": "DEEPSEEK_API_KEY", "anthropic": "ANTHROPIC_API_KEY", "openai": "OPENAI_API_KEY", "gemini": "GEMINI_API_KEY",
+                 "github": "GITHUB_MODELS_TOKEN", "groq": "GROQ_API_KEY"}
 # Providers with large context windows keep full tool results; the rest get trimmed ones (see App._run).
-LARGE_CONTEXT = {"anthropic", "deepseek", "openai"}
+LARGE_CONTEXT = {"anthropic", "deepseek", "openai", "gemini"}
 
 
 def choose_provider() -> tuple[str, str]:
@@ -200,12 +209,22 @@ def detect_provider() -> str:
     return choose_provider()[0]
 
 
+def github_model() -> str:
+    return os.environ.get("GITHUB_MODELS_MODEL") or "openai/gpt-4.1-mini"
+
+
+def gemini_model() -> str:
+    return os.environ.get("GEMINI_MODEL") or "gemini-2.5-flash"
+
+
 def provider_model(provider: str) -> str:
     """The model a provider will use, for logs and /api/health. Never includes a key."""
     return {
         "deepseek": os.environ.get("DEEPSEEK_MODEL", "deepseek-chat"),
         "anthropic": os.environ.get("ANTHROPIC_MODEL") or "claude-sonnet-5-5",
         "openai": openai_model() if provider == "openai" else "",
+        "gemini": gemini_model() if provider == "gemini" else "",
+        "github": github_model() if provider == "github" else "",
         "groq": os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b"),
     }.get(provider, "")
 
@@ -488,7 +507,7 @@ def make_handler(app: App):
                 if not DATE.match(as_of):
                     return self._json(400, {"error": "as_of must be YYYY-MM-DD"})
                 if not app.provider:
-                    return self._json(503, {"error": "No LLM key is configured on the server. Set DEEPSEEK_API_KEY, ANTHROPIC_API_KEY, OPENAI_API_KEY or GROQ_API_KEY and restart."})
+                    return self._json(503, {"error": "No LLM key is configured on the server. Set DEEPSEEK_API_KEY, ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, GITHUB_MODELS_TOKEN or GROQ_API_KEY and restart."})
                 ok, why, retry = app.allow_trial(self._client())
                 if not ok:
                     return self._json(429, {"error": why}, {"Retry-After": str(retry)})
