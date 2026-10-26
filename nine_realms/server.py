@@ -268,7 +268,8 @@ class App:
             bus = EventBus(sink=lambda ev: self.store.add_event(case_id, ev))
             base: dict[str, Any] = {"max_llm_calls": self.cfg.max_llm_calls, "max_tokens": self.cfg.max_case_tokens,
                                     "max_usd": self.cfg.max_case_usd}
-            if self.provider not in LARGE_CONTEXT:
+            # small-context providers, or NINE_REALMS_LEAN_CONTEXT=1 on a tight budget: shorter tool results and context
+            if self.provider not in LARGE_CONTEXT or os.environ.get("NINE_REALMS_LEAN_CONTEXT") == "1":
                 base |= {"max_tool_result_chars": 3500, "max_context_chars": 13000}  # fit small per-minute token budgets
             thing = Thing(make_llm(self.provider), self.corpus, limits=Limits(**base, **options), bus=bus, memory_dir=self.cfg.memory_dir,
                           on_update=lambda c: self.store.save_case(c.to_dict(), self.provider))

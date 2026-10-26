@@ -190,7 +190,11 @@ class OpenAICompatClient:
                 msgs.append({"role": "tool", "tool_call_id": m["tool_call_id"], "content": m["content"]})
             else:
                 msgs.append({"role": "user", "content": m["content"]})
-        body: dict[str, Any] = {"model": self.model, "messages": msgs, "max_tokens": self.max_tokens, "temperature": 0.2}
+        body: dict[str, Any] = {"model": self.model, "messages": msgs, "max_tokens": self.max_tokens}
+        if not self.model.startswith("anthropic/"):
+            body["temperature"] = 0.2  # current Claude models reject sampling parameters, so they get none
+        if "openrouter.ai" in self.base_url:
+            body["usage"] = {"include": True}  # OpenRouter then reports what each call cost, so the dollar caps apply
         if self.model.startswith("openai/gpt-oss"):
             body["reasoning_effort"] = "low"  # reasoning tokens count against the per-minute budget
         if tools:
@@ -231,7 +235,12 @@ class OpenAICompatClient:
             except json.JSONDecodeError:
                 args = {}
             calls.append(ToolCall(c["id"], c["function"]["name"], args))
-        return LLMResponse(msg.get("content") or None, calls, data.get("usage", {}).get("total_tokens", 0))
+        usage = data.get("usage") or {}
+        try:
+            cost = float(usage.get("cost") or 0)  # US$, reported by OpenRouter when usage.include is set
+        except (TypeError, ValueError):
+            cost = 0.0
+        return LLMResponse(msg.get("content") or None, calls, usage.get("total_tokens", 0), cost_usd=cost)
 
     @staticmethod
     def _salvage(detail: str, tool_names: list[str]) -> LLMResponse | None:

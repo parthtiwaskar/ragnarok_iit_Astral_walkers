@@ -1030,9 +1030,11 @@ function verdict(rows) {
 
 function rigorStats(run) {
   const sources = new Set(Object.values(run.claims || {}).flatMap((c) => c.evidence.map((e) => e.doc_id))).size;
-  const stats = [[(run.runs || []).length, "trial runs"], [Object.keys(run.claims || {}).length, "claims argued"], [Object.keys(run.attacks || {}).length, "cross-examinations"],
-    [Object.keys(run.rulings || {}).length, "rulings"], [sources, "sources cited"], [(run.red_flags || []).length, "traps caught"]];
-  return `<div class="rigor">${stats.map(([n, label]) => `<span><b>${n}</b>${label}</span>`).join("")}</div>`;
+  const stats = [[(run.runs || []).length, "trial run"], [Object.keys(run.claims || {}).length, "claim argued", "claims argued"],
+    [Object.keys(run.attacks || {}).length, "cross-examination"], [Object.keys(run.rulings || {}).length, "ruling"],
+    [sources, "source cited", "sources cited"], [(run.red_flags || []).length, "trap caught", "traps caught"]];
+  // singular for 1, else the plural ("trial run" -> "trial runs")
+  return `<div class="rigor">${stats.map(([n, one, many]) => `<span><b>${n}</b>${n === 1 ? one : many || `${one}s`}</span>`).join("")}</div>`;
 }
 
 function answerMarkup(run) {
