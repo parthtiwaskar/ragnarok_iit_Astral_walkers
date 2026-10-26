@@ -970,7 +970,8 @@ async function askQuestion(question, asOf) {
   try { await refreshCases(); } catch (error) { return showToast(error.message); }
   const wanted = asOf || state.asOf;
   // the same question (and date) already answered: show it instead of paying for a new trial
-  const saved = state.cases.find((c) => normQ(c.question) === normQ(question) && (!wanted || c.as_of === wanted) && c.rulings > 0 && c.status !== "ABORTED");
+  // only a COMPLETE answer is reused (a provisional one must not block a rerun), and a Fast answer does not stand in for a Full trial
+  const saved = state.cases.find((c) => normQ(c.question) === normQ(question) && (!wanted || c.as_of === wanted) && c.status === "COMPLETE" && (state.askMode === "fast" || c.runs >= 2));
   if (saved) return showAnswer(saved.case_id);
   if (!state.canRun) {
     state.askNotice = "Live answers are off on this server because no LLM key is configured. Open a recent answer below, or add a key and restart the server.";
@@ -1345,6 +1346,10 @@ document.addEventListener("keydown", (event) => {
 
 window.addEventListener("hashchange", () => {
   const page = currentPage();
+  if (page === "ask" && linkedAnswer() && linkedAnswer() !== state.answerId) {  // a link to one answer (#ask/<case_id>) opens it
+    state.answerId = linkedAnswer();
+    try { sessionStorage.setItem("ragnarisk-answer", state.answerId); } catch { /* optional */ }
+  }
   if (Object.hasOwn(pageTitles, page)) renderPage(page);
 });
 
