@@ -920,9 +920,8 @@ function renderAsk() {
     <div class="ask-main">
     <button class="button button-quiet history-btn" type="button" data-action="toggle-history">☰ History</button>
     <section class="ask-hero${state.answerId ? " has-answer" : ""}">
-      <span class="ask-badge"><i></i> Adversarial AI · every number traced to a source</span>
-      <h1>Ask about a <span class="grad">supply-chain disruption</span></h1>
-      <p class="ask-lede">Four AI agents check the event, argue both sides from the Runemark corpus, and a judge rules on every claim. You get a range, the evidence behind it, and a PDF report.</p>
+      <h1>Ask about a <span class="grad">disruption</span></h1>
+      <p class="ask-lede">One agent checks the event is real. Two argue opposite sides from the documents, and a judge rules on every claim. You get a range, the evidence behind it, and a report you can hand over.</p>
       <form class="ask-box" id="ask-form">
         <label for="ask-query" class="sr-only">Your question</label>
         <textarea id="ask-query" rows="3" placeholder="For example: how exposed is Midgard to the end of the Orvan corridor agreement?">${escapeHtml(activeQuestion)}</textarea>
@@ -937,12 +936,7 @@ function renderAsk() {
         </div>
       </form>
       ${state.askNotice ? `<p class="ask-notice" role="status">${escapeHtml(state.askNotice)}</p>` : ""}
-      <ol class="how" aria-label="How an answer is made">
-        <li><span class="how-icons"><span class="how-ico h">H</span></span><b>Verify</b><small>Heimdall checks the event is real as of your date</small></li>
-        <li><span class="how-icons"><span class="how-ico t">T</span><span class="how-ico l">L</span></span><b>Argue</b><small>Thor and Loki make sealed cases, then cross-examine</small></li>
-        <li><span class="how-icons"><span class="how-ico o">O</span></span><b>Rule</b><small>Odin judges every claim; code bounds the range</small></li>
-        <li><span class="how-icons"><span class="how-ico r">▤</span></span><b>Report</b><small>Answer, evidence and a PDF you can hand over</small></li>
-      </ol>
+      <p class="how-line">Heimdall checks the event · Thor and Loki argue · Odin rules · you read the briefing</p>
     </section>
     <section class="answer" id="answer" aria-live="polite"></section>
     </div>
@@ -1025,7 +1019,7 @@ async function showTrialCost(id) {
     const done = (data.events || []).at(-1);
     const cell = document.querySelector("#side-cost");
     if (!done || !cell || !(done.usd > 0) || state.answerId !== id) return;
-    cell.querySelector("dd").textContent = `$${Number(done.usd).toFixed(2)} · ${done.llm_calls} AI calls`;
+    cell.querySelector("dd").textContent = `$${Number(done.usd).toFixed(2)} · ${done.llm_calls} model calls`;
     cell.hidden = false;
   } catch { /* cost is optional detail */ }
 }
@@ -1478,6 +1472,7 @@ async function prepareLinkedReport() {
     const health = await api("/health");
     if (health.auth_required && !getToken()) askToken();
     state.canRun = !!health.provider;
+    syncLivePill(health);
     if (health.running) { state.caseId = health.running; startPolling(health.running); }
   } catch { /* server unreachable: pages show their own errors */ }
 })();
@@ -1490,3 +1485,13 @@ function syncThemeButton() {
 }
 document.addEventListener("themechange", () => { syncThemeButton(); renderPage(currentPage()); });
 syncThemeButton();
+
+// The small status card at the foot of the navigation: can this server start new trials?
+function syncLivePill(health) {
+  const pill = document.querySelector("#live-pill");
+  if (!pill) return;
+  const live = !!health?.provider;
+  pill.classList.toggle("on", live);
+  document.querySelector("#live-pill-title").textContent = live ? "Live trials on" : "Read-only";
+  document.querySelector("#live-pill-sub").textContent = live ? `${health.provider}${health.model ? " · " + health.model : ""}` : "No LLM key set";
+}

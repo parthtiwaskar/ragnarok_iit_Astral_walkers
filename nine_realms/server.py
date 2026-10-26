@@ -60,7 +60,7 @@ from .tools import Limits
 
 __version__ = "1.0.0"
 ROOT = Path(__file__).resolve().parent.parent
-STATIC = {"/": "index.html", "/index.html": "index.html", "/app.js": "app.js", "/charts.js": "charts.js", "/theme.js": "theme.js", "/styles.css": "styles.css"}
+STATIC = {"/": "index.html", "/index.html": "index.html", "/app.js": "app.js", "/charts.js": "charts.js", "/theme.js": "theme.js", "/styles.css": "styles.css", "/clean.css": "clean.css"}
 DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 # Per-case limit overrides a client may ask for (e.g. a small trial). Anything else is ignored.
 OPTION_RANGES = {"min_runs": (1, 3), "max_runs": (1, 3), "max_claims_per_side": (1, 8), "max_steps_per_turn": (4, 12)}
