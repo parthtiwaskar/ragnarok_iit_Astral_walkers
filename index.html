@@ -13,19 +13,19 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&display=swap"
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400;1,6..72,500&display=swap"
       rel="stylesheet"
     />
     <script src="./theme.js?v=1"></script>
     <link rel="stylesheet" href="./styles.css?v=16" />
-    <link rel="stylesheet" href="./clean.css?v=4" />
+    <link rel="stylesheet" href="./clean.css?v=7" />
   </head>
   <body>
     <div class="app-shell">
       <aside class="sidenav" aria-label="Main navigation">
         <a class="brand" href="#ask" data-page="ask" aria-label="Ragnarisk: ask a question">
           <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 36 36" fill="none"><path d="M18 3.5 30.5 11v14L18 32.5 5.5 25V11L18 3.5Z" stroke="currentColor" stroke-width="1.8"/><path d="m12 22 6-12 6 12m-9-4h6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
-          <span><b>Ragnarisk</b><small>Supply-chain trials</small></span>
+          <span><b>Ragnarisk</b><small>Disruption trials</small></span>
         </a>
         <nav class="nav-group" aria-label="Workspace">
           <span class="nav-title">Workspace</span>
@@ -46,7 +46,7 @@
 
       <main class="main-area">
         <header class="topnav">
-          <span class="mobile-brand"><span class="brand-mark" aria-hidden="true" style="display:grid;place-items:center;width:28px;height:28px;border-radius:8px;background:var(--accent);color:var(--on-accent)"><svg viewBox="0 0 36 36" width="18" height="18" fill="none"><path d="M18 3.5 30.5 11v14L18 32.5 5.5 25V11L18 3.5Z" stroke="currentColor" stroke-width="2"/><path d="m12 22 6-12 6 12m-9-4h6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></span></span>
+          <span class="mobile-brand"><span class="brand-mark" aria-hidden="true" style="display:grid;place-items:center;width:28px;height:28px;color:var(--accent)"><svg viewBox="0 0 36 36" width="18" height="18" fill="none"><path d="M18 3.5 30.5 11v14L18 32.5 5.5 25V11L18 3.5Z" stroke="currentColor" stroke-width="2"/><path d="m12 22 6-12 6 12m-9-4h6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></span></span>
           <span class="crumb-root">Ragnarisk</span><span class="crumb" id="breadcrumb-current">Ask</span>
           <span class="spacer"></span>
           <button class="theme-toggle" type="button" data-action="toggle-theme" aria-label="Switch to light mode" title="Switch theme">
@@ -74,13 +74,12 @@
           <section class="query-panel panel" aria-labelledby="query-title">
             <div class="query-panel-head">
               <div><span class="panel-icon">⌕</span><h2 id="query-title">What would you like to investigate?</h2></div>
-              <span class="model-indicator"><span class="live-dot"></span> FOUR-AGENT COURTROOM</span>
             </div>
             <form class="query-form" id="investigation-form">
               <label for="investigation-query" class="sr-only">Investigation question</label>
               <textarea id="investigation-query" rows="2">As of 25 January 2027, how exposed are Midgard and Tolan to the end of the Orvan corridor agreement? Give a low and high range for wheat and maize imports.</textarea>
               <div class="query-toolbar">
-                <div class="query-context"><span>◷</span> As of <strong id="qa-asof">25 Jan 2027</strong><i></i><span>⌖</span> Corpus <strong id="qa-corpus">E5 · 76 documents</strong><i></i><span class="context-lock">⬡</span> Evidence-backed analysis</div>
+                <div class="query-context">As of <strong id="qa-asof">25 Jan 2027</strong> · Corpus <strong id="qa-corpus">E5 · 76 documents</strong></div>
                 <div class="query-actions"><button type="button" class="button button-quiet" data-action="clear-query">Clear</button><button class="button button-primary run-button" type="submit"><span>Run investigation</span><span>→</span></button></div>
               </div>
             </form>
@@ -207,6 +206,6 @@
     </div>
     <div class="report-root" id="report-root" aria-hidden="true"></div>
     <script src="./charts.js?v=1"></script>
-    <script src="./app.js?v=22"></script>
+    <script src="./app.js?v=23"></script>
   </body>
 </html>
