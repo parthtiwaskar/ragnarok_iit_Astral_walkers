@@ -24,6 +24,8 @@ class ToolCall:
     id: str
     name: str
     args: dict[str, Any]
+    # provider data that must travel back with the call unchanged (Gemini 3 thought signatures); None for most providers
+    extra: dict[str, Any] | None = None
 
 
 @dataclass
@@ -183,7 +185,8 @@ class OpenAICompatClient:
                 am: dict[str, Any] = {"role": "assistant", "content": m.get("content") or ""}
                 if m.get("tool_calls"):
                     am["tool_calls"] = [{"id": c["id"], "type": "function",
-                                         "function": {"name": c["name"], "arguments": json.dumps(c["args"])}}
+                                         "function": {"name": c["name"], "arguments": json.dumps(c["args"])},
+                                         **({"extra_content": c["extra"]} if c.get("extra") else {})}
                                         for c in m["tool_calls"]]
                 msgs.append(am)
             elif m["role"] == "tool":
@@ -234,7 +237,7 @@ class OpenAICompatClient:
                 args = json.loads(c["function"]["arguments"] or "{}")
             except json.JSONDecodeError:
                 args = {}
-            calls.append(ToolCall(c["id"], c["function"]["name"], args))
+            calls.append(ToolCall(c["id"], c["function"]["name"], args, c.get("extra_content")))  # keep Gemini thought signatures
         usage = data.get("usage") or {}
         try:
             cost = float(usage.get("cost") or 0)  # US$, reported by OpenRouter when usage.include is set

@@ -21,7 +21,7 @@ from nine_realms.store import Store
 
 from .fixtures import AS_OF, Q, StubToolBox, make_policy
 
-KEYS = ("DEEPSEEK_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GROQ_API_KEY", "NINE_REALMS_PROVIDER",
+KEYS = ("DEEPSEEK_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "GEMINI_MODEL", "GITHUB_MODELS_TOKEN", "GITHUB_MODELS_MODEL", "GROQ_API_KEY", "NINE_REALMS_PROVIDER",
         "OPENAI_BASE_URL", "NINE_REALMS_OPENAI_MODEL", "DEEPSEEK_MODEL", "ANTHROPIC_MODEL", "GROQ_MODEL")
 
 
@@ -62,7 +62,7 @@ def test_forcing_a_provider_without_its_key_is_reported_not_silently_ignored(env
     env.setenv("NINE_REALMS_PROVIDER", "anthropic")
     provider, why = choose_provider()
     assert provider == "" and "ANTHROPIC_API_KEY is not set" in why
-    env.setenv("NINE_REALMS_PROVIDER", "gemini")
+    env.setenv("NINE_REALMS_PROVIDER", "mistral")
     provider, why = choose_provider()
     assert provider == "" and "not one of" in why
 
@@ -87,6 +87,24 @@ def test_each_provider_builds_the_right_client_without_any_network(env):
 
     env.setenv("ANTHROPIC_API_KEY", "a")
     assert isinstance(make_llm("anthropic"), AnthropicClient) and provider_model("anthropic") == "claude-sonnet-5-5"
+
+
+def test_gemini_uses_googles_openai_compatible_endpoint(env):
+    env.setenv("GEMINI_API_KEY", "g")
+    env.setenv("NINE_REALMS_PROVIDER", "gemini")
+    assert choose_provider()[0] == "gemini"
+    c = make_llm("gemini")
+    assert isinstance(c, OpenAICompatClient) and c.base_url == "https://generativelanguage.googleapis.com/v1beta/openai"
+    env.setenv("GEMINI_MODEL", "gemini-x-flash")
+    assert make_llm("gemini").model == "gemini-x-flash" and provider_model("gemini") == "gemini-x-flash"
+
+
+def test_github_models_uses_the_inference_endpoint_with_the_free_tier_output_cap(env):
+    env.setenv("GITHUB_MODELS_TOKEN", "t")
+    env.setenv("NINE_REALMS_PROVIDER", "github")
+    assert choose_provider()[0] == "github"
+    c = make_llm("github")
+    assert c.base_url == "https://models.github.ai/inference" and c.model == "openai/gpt-4.1-mini" and c.max_tokens <= 4000
 
 
 # ---- 2. end to end through the server ----------------------------------------------

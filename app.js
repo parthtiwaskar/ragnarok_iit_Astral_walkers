@@ -181,6 +181,7 @@ function caseRow(c) {
 
 // Provider and billing failures, in the words a presenter can act on (mirrors nine_realms/preflight.py).
 const PROVIDER_PROBLEMS = [
+  [/free-models-per-day|requests per day/i, "The AI provider's free daily request quota is used up (it resets at 00:00 UTC)."],
   [/credit balance is too low/i, "The AI provider account has no credit left, so the trial could not run."],
   [/usage limits?/i, "The AI provider account reached its usage limit, so the trial could not run."],
   [/insufficient (balance|credits)|\b402\b/i, "The AI provider account has no balance, so the trial could not run."],
@@ -1011,6 +1012,7 @@ async function showAnswer(id, { scroll = true } = {}) {
     document.querySelector(".ask-hero")?.classList.add("has-answer");
     if (scroll) root.scrollIntoView({ behavior: "smooth", block: "start" });
     showTrialCost(id);
+    showRetrievalTrail(id);
   } catch (error) {
     root.innerHTML = errorBox("Could not load this answer", error.message);
   }
@@ -1026,6 +1028,61 @@ async function showTrialCost(id) {
     cell.querySelector("dd").textContent = `$${Number(done.usd).toFixed(2)} · ${done.llm_calls} AI calls`;
     cell.hidden = false;
   } catch { /* cost is optional detail */ }
+}
+
+// Heimdall's verification ruling: whether the event (and any claim about it) holds up, with the sources he relied on.
+const verificationBlock = (run) => run.verdict_reason ? `<div class="answer-block verification" id="j-verification">
+  <h2>Event verification <em>${run.verified ? "event verified" : "not verified"}</em></h2>
+  <p class="hint">Heimdall checks the event against the corpus before any debate, and rules out decoys and rumours.</p>
+  <p>${escapeHtml(run.verdict_reason)}</p></div>` : "";
+
+// Sources the system flagged (rumours, retractions, injections, damaged files) and did not rely on as written.
+function flagsBlock(run) {
+  const flags = run.red_flags || [];
+  if (!flags.length) return "";
+  const trap = (f) => `<li><button class="chip-btn" data-action="open-doc" data-doc="${escapeHtml(f.doc_id)}">${escapeHtml(f.doc_id)}</button><span class="trap-type">${escapeHtml(String(f.type).replace(/_/g, " "))}</span><span>${escapeHtml(f.note)}</span></li>`;
+  return `<div class="answer-block" id="j-traps"><h2>Sources set aside <em>${flags.length}</em></h2><p class="hint">Flagged during verification and not relied on as written: rumours, retractions, contradictions, injections, damaged files.</p>
+      <ul class="trap-list">${flags.slice(0, 6).map(trap).join("")}</ul>
+      ${flags.length > 6 ? `<details class="more-traps"><summary>Show all ${flags.length}</summary><ul class="trap-list">${flags.slice(6).map(trap).join("")}</ul></details>` : ""}</div>`;
+}
+
+// What each agent searched and read, in order, from the case's tool_call events (filled in by showRetrievalTrail).
+const trailBlock = () => `<div class="answer-block" id="j-trail"><h2>Retrieval trail <em id="trail-count">…</em></h2>
+  <p class="hint">Every search and document the agents used, in order, with the documents each search returned. The as-of date is enforced by the tools, so nothing published later can be retrieved.</p>
+  <div id="trail-body"><p class="hint">Loading…</p></div></div>`;
+
+const TOOL_VERBS = { search_documents: "searched", read_document: "read", read_trade_table: "read trade table", trade_stats: "computed trade statistics for",
+  list_trade_tables: "listed trade tables", list_events: "listed candidate events", event_profile: "profiled event", verify_citation: "verified a quote in",
+  find_related: "looked for related reports to", get_reference: "checked reference data" };
+
+async function showRetrievalTrail(id) {
+  const body = document.querySelector("#trail-body");
+  if (!body) return;
+  try {
+    const data = await api(`/cases/${encodeURIComponent(id)}/events?types=tool_call&limit=2000`);
+    if (state.answerId !== id || !document.querySelector("#trail-body")) return;
+    const calls = data.events || [];
+    const byAgent = new Map();
+    calls.forEach((e) => byAgent.set(e.agent || "AGENT", [...(byAgent.get(e.agent || "AGENT") || []), e]));
+    const chip = (d) => `<button class="chip-btn" data-action="open-doc" data-doc="${escapeHtml(d)}">${escapeHtml(d)}</button>`;
+    const line = (e) => {
+      const a = e.args || {};
+      const target = a.query ? `“${escapeHtml(a.query)}”` : escapeHtml(a.doc_id || a.table_id || a.event_id || "");
+      const filters = ["country", "sector", "event_id", "tier_max", "source_type"].filter((k) => a.query && a[k]).map((k) => `${k}=${escapeHtml(a[k])}`).join(", ");
+      const got = (e.retrieved || []).slice(0, 8);
+      return `<li><span class="trail-verb">${escapeHtml(TOOL_VERBS[e.tool] || e.tool)}</span> ${target}${filters ? ` <small>(${filters})</small>` : ""}${e.error ? ` <small class="trail-err">error: ${escapeHtml(String(e.error).slice(0, 80))}</small>` : ""}
+        ${got.length ? `<div class="trail-docs">→ ${got.map(chip).join("")}${(e.retrieved || []).length > 8 ? ` <small>+${e.retrieved.length - 8} more</small>` : ""}</div>` : ""}</li>`;
+    };
+    const order = ["HEIMDALL", "THOR", "LOKI", "ODIN"];
+    const agents = [...byAgent.keys()].sort((x, y) => (order.indexOf(x) + 99) % 99 - (order.indexOf(y) + 99) % 99);
+    const searches = calls.filter((e) => e.tool === "search_documents").length;
+    const distinct = new Set(calls.flatMap((e) => e.retrieved || []).concat(calls.map((e) => e.args?.doc_id).filter(Boolean))).size;
+    document.querySelector("#trail-count").textContent = `${searches} ${searches === 1 ? "search" : "searches"} · ${distinct} ${distinct === 1 ? "source" : "sources"}`;
+    body.innerHTML = agents.length ? agents.map((agent, i) => `<details class="trail-agent" ${i === 0 ? "open" : ""}><summary><b>${escapeHtml(agent.charAt(0) + agent.slice(1).toLowerCase())}</b> <small>${byAgent.get(agent).length} tool calls</small></summary><ol>${byAgent.get(agent).map(line).join("")}</ol></details>`).join("")
+      : '<p class="hint">No tool calls were recorded for this case (saved runs imported before logging have none).</p>';
+  } catch {
+    body.innerHTML = '<p class="hint">The retrieval trail could not be loaded.</p>';
+  }
 }
 
 // Established findings: Odin's briefing when he wrote one, else the claims he ruled established.
@@ -1071,7 +1128,7 @@ function answerRow(row) {
   if (!row.odin) return `<li class="ans-row rating-none">${scope}<span class="ans-range">No range</span><span class="ans-sides">No usable evidence for this flow in the corpus, so no number is given rather than a guess.</span></li>`;
   const band = bandOf(row.odin);
   const sides = [row.thor && `<span class="k-thor">Thor (high case) ${fmtShort(row.thor)}</span>`, row.loki && `<span class="k-loki">Loki (low case) ${fmtShort(row.loki)}</span>`, `<span class="k-odin">Odin's ruling ${fmtShort(row.odin)}</span>`].filter(Boolean).join("");
-  return `<li class="ans-row rating-${band.key}">${scope}<span class="ans-range">${fmtRange(row.odin)}<small>expected fall in imports</small></span><span class="rating-pill"><i></i>${band.label}</span>${rangeBar(row)}<span class="ans-sides">${sides}</span></li>`;
+  return `<li class="ans-row rating-${band.key}">${scope}<span class="ans-range">${fmtRange(row.odin)}<small>expected fall</small></span><span class="rating-pill"><i></i>${band.label}</span>${rangeBar(row)}<span class="ans-sides">${sides}</span></li>`;
 }
 
 // One plain sentence built from the ruled ranges (code, not the model), plus the highest rating.
@@ -1080,7 +1137,7 @@ function verdict(rows) {
   if (!ruled.length) return "";
   const top = RATING_BANDS[Math.max(...ruled.map((r) => RATING_BANDS.indexOf(bandOf(r.odin))))];
   const missing = rows.filter((r) => !r.odin).map((r) => `${r.country} ${r.sector.toLowerCase()}`);
-  const text = `Imports are expected to fall ${ruled.map((r) => `<b>${fmtShort(r.odin)}</b> for ${escapeHtml(r.country)} ${escapeHtml(r.sector.toLowerCase())}`).join(", ")}.${missing.length ? ` No range for ${escapeHtml(missing.join(", "))}: the corpus holds no usable evidence.` : ""}`;
+  const text = `Expected fall: ${ruled.map((r) => `<b>${fmtShort(r.odin)}</b> for ${escapeHtml(r.country)} ${escapeHtml(r.sector.toLowerCase())}`).join(", ")}.${missing.length ? ` No range for ${escapeHtml(missing.join(", "))}: the corpus holds no usable evidence.` : ""}`;
   return `<div class="verdict rating-${top.key}"><span class="verdict-label"><i></i>${top.label} exposure</span><p>${text}</p></div>`;
 }
 
@@ -1112,6 +1169,7 @@ function completeBody(run, { rows, provisional }) {
   return `${verdict(rows)}
     ${rigorStats(run)}
     ${provisional}
+    ${verificationBlock(run)}
     <ul class="ans-rows" id="j-ranges">${rows.length ? rows.map(answerRow).join("") : '<li class="ans-row rating-none"><span class="ans-sides">No ranges were ruled.</span></li>'}</ul>
     <section class="complete-section" id="j-table"><h2>Exposure table</h2><p class="hint">Low and high bounds for each country and sector. Unit: ${escapeHtml(run.unit || "% fall in imports")}.</p><div style="overflow-x:auto">${rows.length ? exposureTable(rows, run.unit) : '<p class="rating-note">No ranges were ruled.</p>'}</div><div id="exposure-chart" class="chart-card" style="margin-top:14px"></div></section>
     <section class="complete-section" id="j-trial"><h2>Thor vs Loki <em>${claims.length} claims</em></h2><p class="hint">Sealed first round. Each claim carries its sources; a pill shows what Odin ruled.</p>${claims.length ? statusBars(run) : ""}
@@ -1133,11 +1191,36 @@ function completeBody(run, { rows, provisional }) {
 function answerMarkup(run) {
   const head = `<header class="answer-head"><span class="answer-kicker">Answer</span><p class="answer-q">${escapeHtml(run.question)}</p>
     <div class="answer-meta">${statusBadge(run.status)}${run.verified ? '<span class="verified">✓ Event verified</span>' : ""}${(run.runs || []).length === 1 ? "<span>Fast answer · 1 trial run</span>" : ""}<span>As of ${escapeHtml(fmtDate(run.as_of))}</span><span>Case ${escapeHtml(run.case_id)}</span>${run.provider === "imported" ? "<span>Saved trial</span>" : ""}</div></header>`;
+  if (run.status === "REJECTED") {
+    // Heimdall's verification is the whole answer here: show his reasoning, the sources set aside, and what he searched.
+    return `${head}
+      <div class="verdict rating-severe"><span class="verdict-label"><i></i>Event not verified: rejected</span>
+        <p>The claimed disruption is not supported by reliable Runemark sources as of ${escapeHtml(fmtDate(run.as_of))}, so no trial was held on it.</p></div>
+      <div class="answer-block" id="j-verification"><h2>Why: event verification</h2><p>${escapeHtml(run.verdict_reason || friendlyReason(run.status_reasons))}</p></div>
+      ${flagsBlock(run)}
+      ${trailBlock()}
+      <div class="answer-actions">
+        <button class="button button-primary" data-action="download-report">Download PDF report</button>
+        <button class="button button-quiet" data-action="ask-again">Ask another question</button>
+      </div>`;
+  }
   if (!["COMPLETE", "INCOMPLETE"].includes(run.status)) {
-    const rejected = run.status === "REJECTED";
-    const why = rejected ? run.verdict_reason || friendlyReason(run.status_reasons) : (run.status_reasons || []).length ? friendlyReason(run.status_reasons) : "The trial stopped before any ruling.";
-    return `${head}<div class="answer-card"><h2>${rejected ? "The event could not be verified" : "This question could not be answered"}</h2><p>${escapeHtml(why)}</p>
-      <div class="answer-actions"><button class="button button-quiet" data-action="ask-again">Ask another question</button></div></div>`;
+    // agents' own failures name the real cause (e.g. a provider rate limit) better than "both sides failed"
+    const failures = (run.runs || []).flatMap((r) => r.failures || []);
+    const providerHit = PROVIDER_PROBLEMS.find(([pattern]) => pattern.test(failures.join(" ")));
+    const why = providerHit ? `${friendlyReason(run.status_reasons)} Cause: ${providerHit[1]}`
+      : (run.status_reasons || []).length ? friendlyReason(run.status_reasons) : "The trial stopped before any ruling.";
+    const verifiedFirst = !!run.verdict_reason;
+    return `${head}
+      <div class="answer-card"><h2>${verifiedFirst ? "Verification finished; the debate did not run" : "This question could not be answered"}</h2><p>${escapeHtml(why)}</p>
+        ${verifiedFirst ? "<p>Heimdall's verification below was completed and stands on its own.</p>" : ""}</div>
+      ${verificationBlock(run)}
+      ${flagsBlock(run)}
+      ${trailBlock()}
+      <div class="answer-actions">
+        ${verifiedFirst ? '<button class="button button-primary" data-action="download-report">Download PDF report</button>' : ""}
+        <button class="button button-quiet" data-action="ask-again">Ask another question</button>
+      </div>`;
   }
   const rows = exposureRows(run);
   const findings = establishedFindings(run);
@@ -1145,14 +1228,13 @@ function answerMarkup(run) {
   const summary = answerSummary(run);
   const complete = state.answerView === "complete";
   const toggle = `<div class="view-toggle" role="group" aria-label="Answer view"><button type="button" class="${complete ? "" : "on"}" data-action="answer-view" data-view="summary" aria-pressed="${!complete}">Summary</button><button type="button" class="${complete ? "on" : ""}" data-action="answer-view" data-view="complete" aria-pressed="${complete}">Complete view</button></div>`;
-  const trap = (f) => `<li><button class="chip-btn" data-action="open-doc" data-doc="${escapeHtml(f.doc_id)}">${escapeHtml(f.doc_id)}</button><span class="trap-type">${escapeHtml(String(f.type).replace(/_/g, " "))}</span><span>${escapeHtml(f.note)}</span></li>`;
   const provisional = run.status !== "COMPLETE"
     ? `<p class="answer-flag"><b>Provisional.</b> ${escapeHtml(friendlyReason(run.status_reasons))} The ranges come from the rulings that were made.</p>` : "";
   const disputed = findingsSection(run, "Disputed", "Credible sources disagree. Not settled.", run.briefing?.contested, false);
   const ruledOut = findingsSection(run, "Ruled out", "Claims a side conceded, or Odin rejected.", run.briefing?.conceded, false);
   const jumps = (complete
-    ? [["ranges", "Ranges"], ["table", "Exposure table"], ["trial", "Thor vs Loki"], Object.keys(run.attacks || {}).length && ["xexam", "Cross-examination"], ["rulings", "Odin's rulings"], ["brief", "Briefing"], ["trade", "Trade data"], ["sources", "All sources"], ["accept", "Acceptance"]]
-    : [["ranges", "Ranges"], summary && ["summary", summary[0]], ["evidence", "Evidence"], flags.length && ["traps", "Traps caught"], disputed && ["disputed", "Disputed"], ruledOut && ["ruled", "Ruled out"]]).filter(Boolean);
+    ? [["ranges", "Ranges"], ["table", "Exposure table"], ["trial", "Thor vs Loki"], Object.keys(run.attacks || {}).length && ["xexam", "Cross-examination"], ["rulings", "Odin's rulings"], ["brief", "Briefing"], ["trade", "Trade data"], ["sources", "All sources"], ["accept", "Acceptance"], ["trail", "Retrieval trail"]]
+    : [run.verdict_reason && ["verification", "Verification"], ["ranges", "Ranges"], summary && ["summary", summary[0]], ["evidence", "Evidence"], flags.length && ["traps", "Traps caught"], disputed && ["disputed", "Disputed"], ruledOut && ["ruled", "Ruled out"], ["trail", "Retrieval trail"]]).filter(Boolean);
   const sources = new Set(Object.values(run.claims || {}).flatMap((c) => c.evidence.map((e) => e.doc_id))).size;
   // Actions live in a sticky sidebar beside the answer on wide screens, and below it on phones.
   const side = `<aside class="answer-side" aria-label="Answer actions">
@@ -1175,17 +1257,16 @@ function answerMarkup(run) {
     ${verdict(rows)}
     ${rigorStats(run)}
     ${provisional}
+    ${verificationBlock(run)}
     <ul class="ans-rows" id="j-ranges">${rows.length ? rows.map(answerRow).join("") : '<li class="ans-row rating-none"><span class="ans-sides">No ranges were ruled.</span></li>'}</ul>
     ${summary ? `<div class="answer-block" id="j-summary"><h2>${summary[0]}</h2><p>${escapeHtml(summary[1])}</p></div>` : ""}
     <div class="answer-block" id="j-evidence"><h2>Why: the evidence <em>${findings.length}</em></h2><p class="hint">Findings that survived cross-examination. Click a source to see the exact passage.</p>
       ${findings.length ? findings.map((f) => `<div class="finding">${escapeHtml(f.text)}<div class="cites">${sourceChips(run, f.claim_ids)}</div></div>`).join("") : '<p class="hint">Nothing was established yet.</p>'}</div>
-    ${flags.length ? `<div class="answer-block" id="j-traps"><h2>Traps caught <em>${flags.length}</em></h2><p class="hint">Sources the system flagged and did not rely on as written.</p>
-      <ul class="trap-list">${flags.slice(0, 5).map(trap).join("")}</ul>
-      ${flags.length > 5 ? `<details class="more-traps"><summary>Show all ${flags.length}</summary><ul class="trap-list">${flags.slice(5).map(trap).join("")}</ul></details>` : ""}</div>` : ""}
+    ${flagsBlock(run)}
     ${disputed ? `<div id="j-disputed">${disputed}</div>` : ""}
     ${ruledOut ? `<div id="j-ruled">${ruledOut}</div>` : ""}
 `;
-  const body = complete ? completeBody(run, { rows, provisional }) : summaryBody;
+  const body = (complete ? completeBody(run, { rows, provisional }) : summaryBody) + trailBlock();
   return `${head}${toggle}
     <div class="answer-grid">
     <div class="answer-main">${body}    </div>
@@ -1194,7 +1275,8 @@ function answerMarkup(run) {
 }
 
 // ---- PDF report: a print-only document; the browser's "Save as PDF" writes the file --
-function reportMarkup(run) {
+function reportMarkup(run, trail = []) {
+  const rejected = run.status === "REJECTED";
   const rows = exposureRows(run);
   const findings = establishedFindings(run);
   const brief = run.briefing || {};
@@ -1211,10 +1293,11 @@ function reportMarkup(run) {
         <dl><dt>Case</dt><dd>${escapeHtml(run.case_id)}</dd><dt>As of</dt><dd>${escapeHtml(fmtDate(run.as_of))}</dd><dt>Status</dt><dd>${escapeHtml((STATUS[run.status] || [0, run.status])[1])}</dd><dt>Generated</dt><dd>${escapeHtml(new Date().toLocaleString("en-GB"))}</dd></dl></header>
 
       <h1>${escapeHtml(run.question)}</h1>
-      ${run.status !== "COMPLETE" ? `<p class="rp-flag"><b>Provisional.</b> ${escapeHtml(friendlyReason(run.status_reasons))} Treat the ranges as a first pass.</p>` : ""}
+      ${rejected ? `<p class="rp-flag"><b>Event not verified: rejected.</b> The claimed disruption is not supported by reliable Runemark sources as of ${escapeHtml(fmtDate(run.as_of))}, so no trial was held on it.</p>`
+        : run.status !== "COMPLETE" ? `<p class="rp-flag"><b>Provisional.</b> ${escapeHtml(friendlyReason(run.status_reasons))} Treat the ranges as a first pass.</p>` : ""}
 
       <h2>1. Answer</h2>
-      <table class="rp-table"><thead><tr><th>Country</th><th>Sector</th><th>Expected fall in imports</th><th>Rating</th><th>High case (Thor)</th><th>Low case (Loki)</th></tr></thead><tbody>
+      <table class="rp-table"><thead><tr><th>Country</th><th>Sector</th><th>Expected fall</th><th>Rating</th><th>High case (Thor)</th><th>Low case (Loki)</th></tr></thead><tbody>
         ${rows.map((r) => { const band = r.odin && RATING_BANDS.find((b) => { const [lo, hi] = magnitude(r.odin); return (lo + hi) / 2 < b.max; });
           return `<tr><td>${escapeHtml(r.country)}</td><td>${escapeHtml(r.sector)}</td><td><b>${r.odin ? fmtRange(r.odin) : "No range: no usable evidence"}</b></td><td>${band ? band.label : "—"}</td><td>${fmtRange(r.thor)}</td><td>${fmtRange(r.loki)}</td></tr>`; }).join("")}
       </tbody></table>
@@ -1222,7 +1305,7 @@ function reportMarkup(run) {
       ${answerSummary(run) ? `<p>${escapeHtml(answerSummary(run)[1])}</p>` : ""}
 
       <h2>2. Why this answer</h2>
-      ${run.verdict_reason ? `<h3>The event was verified first</h3><p>${escapeHtml(run.verdict_reason)}</p>` : ""}
+      ${run.verdict_reason ? `<h3>${rejected ? "Event verification: rejected" : "The event was verified first"}</h3><p>${escapeHtml(run.verdict_reason)}</p>` : ""}
       <h3>Findings that survived cross-examination</h3>
       ${findings.length ? findings.map((f) => `<div class="rp-finding"><p>${escapeHtml(f.text)}</p><ul class="rp-cites">${uniqueEvidence(run, f.claim_ids).slice(0, 4).map(cite).join("")}</ul></div>`).join("") : "<p>Nothing was established.</p>"}
       ${(run.ranges || []).filter((g) => g.rationale).length ? `<h3>How the judge set each range</h3><ul>${run.ranges.filter((g) => g.rationale).map((g) => `<li><b>${escapeHtml(g.country)} · ${escapeHtml(g.sector)}:</b> ${escapeHtml(g.rationale)}</li>`).join("")}</ul>` : ""}
@@ -1242,6 +1325,7 @@ function reportMarkup(run) {
         <li>Ranges are a judgment over the cited Runemark evidence, not a forecast from outside data.</li>
       </ul>
 
+      ${trailSection(trail)}
       <h2>Sources cited</h2>
       <table class="rp-table rp-sources"><thead><tr><th>Document</th><th>Tier</th><th>Published</th></tr></thead><tbody>
         ${[...docs.values()].sort((a, b) => a.doc_id.localeCompare(b.doc_id)).map((e) => `<tr><td>${escapeHtml(e.doc_id)}</td><td>${escapeHtml(e.tier ?? "?")}</td><td>${escapeHtml(e.date || "undated")}</td></tr>`).join("")}
@@ -1249,10 +1333,25 @@ function reportMarkup(run) {
     </article>`;
 }
 
-function downloadReport() {
+async function caseTrail(id) {
+  try { return (await api(`/cases/${encodeURIComponent(id)}/events?types=tool_call&limit=2000`)).events || []; } catch { return []; }
+}
+
+// The retrieval trail for the PDF: each agent's searches (with what they returned) and the documents read.
+function trailSection(trail) {
+  if (!trail.length) return "";
+  const byAgent = new Map();
+  trail.forEach((e) => byAgent.set(e.agent || "AGENT", [...(byAgent.get(e.agent || "AGENT") || []), e]));
+  const item = (e) => { const a = e.args || {}; const what = a.query ? `searched “${escapeHtml(a.query)}”` : `${escapeHtml(TOOL_VERBS[e.tool] || e.tool)} ${escapeHtml(a.doc_id || a.table_id || a.event_id || "")}`;
+    return `<li>${what}${(e.retrieved || []).length ? ` → ${escapeHtml(e.retrieved.slice(0, 8).join(", "))}` : ""}</li>`; };
+  return `<h2>Retrieval trail</h2><p class="rp-note">Every search and document each agent used, in order. Nothing published after the as-of date could be retrieved.</p>
+    ${[...byAgent.entries()].map(([agent, calls]) => `<h3>${escapeHtml(agent.charAt(0) + agent.slice(1).toLowerCase())} (${calls.length} tool calls)</h3><ol class="rp-trail">${calls.map(item).join("")}</ol>`).join("")}`;
+}
+
+async function downloadReport() {
   const run = state.run?.id === state.answerId ? state.run.case : null;
   if (!run) return showToast("Open an answer first.");
-  document.querySelector("#report-root").innerHTML = reportMarkup(run);
+  document.querySelector("#report-root").innerHTML = reportMarkup(run, await caseTrail(run.case_id));
   state.titleBeforePrint = document.title;
   document.title = `Ragnarisk report ${run.case_id}`;  // becomes the suggested PDF file name
   showToast("Choose “Save as PDF” in the print dialog.");
@@ -1363,7 +1462,7 @@ async function prepareLinkedReport() {
   if (!id) return;
   try {
     const info = await loadCase(id, true);
-    document.querySelector("#report-root").innerHTML = reportMarkup(info.case);
+    document.querySelector("#report-root").innerHTML = reportMarkup(info.case, await caseTrail(id));
     document.title = `Ragnarisk report ${id}`;
   } catch (error) {
     showToast(`Could not build the report: ${error.message}`);
