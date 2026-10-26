@@ -64,6 +64,50 @@ def test_tool_results_follow_their_assistant_turn_in_the_neutral_message_format(
                                                      "cache_control": {"type": "ephemeral"}}]}
 
 
+class FakeHTTP:
+    """Stands in for urllib's urlopen: records each request body and answers like an OpenAI-compatible endpoint."""
+
+    def __init__(self, usage):
+        self.bodies, self.usage = [], usage
+
+    def __call__(self, req, timeout=None):
+        import io
+        import json
+        self.bodies.append(json.loads(req.data))
+        reply = {"choices": [{"message": {"content": "ok", "tool_calls": [
+            {"id": "t1", "type": "function", "function": {"name": "echo", "arguments": '{"word": "ready"}'}}]}}], "usage": self.usage}
+        resp = io.BytesIO(json.dumps(reply).encode())
+        resp.__enter__ = lambda *a: resp
+        resp.__exit__ = lambda *a: False
+        return resp
+
+
+def test_openrouter_claude_gets_no_temperature_and_reports_cost(monkeypatch):
+    import urllib.request
+
+    from nine_realms.llm import OpenAICompatClient
+    http = FakeHTTP({"total_tokens": 150, "cost": 0.0123})
+    monkeypatch.setattr(urllib.request, "urlopen", http)
+    r = OpenAICompatClient("k", "anthropic/claude-sonnet-5.5", base_url="https://openrouter.ai/api/v1").complete(
+        system="S", messages=[{"role": "user", "content": "x"}], tools=TOOLS)
+    body = http.bodies[0]
+    assert "temperature" not in body                      # current Claude models reject sampling parameters
+    assert body["usage"] == {"include": True}             # ask OpenRouter for the cost of each call
+    assert r.cost_usd == 0.0123 and r.tokens == 150 and r.tool_calls[0].args == {"word": "ready"}
+
+
+def test_other_openai_compatible_models_keep_temperature_and_report_no_cost(monkeypatch):
+    import urllib.request
+
+    from nine_realms.llm import OpenAICompatClient
+    http = FakeHTTP({"total_tokens": 80})
+    monkeypatch.setattr(urllib.request, "urlopen", http)
+    r = OpenAICompatClient("k", "deepseek-chat", base_url="https://api.deepseek.com/v1").complete(
+        system="S", messages=[{"role": "user", "content": "x"}], tools=[])
+    assert http.bodies[0]["temperature"] == 0.2 and "usage" not in http.bodies[0]
+    assert r.cost_usd == 0.0                              # unmetered: the token cap still applies
+
+
 def test_the_conversation_so_far_is_cached_without_changing_the_callers_messages():
     api = FakeAPI()
     msgs = [{"role": "user", "content": "first"}, {"role": "assistant", "content": "ok"}, {"role": "user", "content": "second"}]
