@@ -1478,6 +1478,7 @@ async function prepareLinkedReport() {
     const health = await api("/health");
     if (health.auth_required && !getToken()) askToken();
     state.canRun = !!health.provider;
+    syncLivePill(health);
     if (health.running) { state.caseId = health.running; startPolling(health.running); }
   } catch { /* server unreachable: pages show their own errors */ }
 })();
@@ -1490,3 +1491,13 @@ function syncThemeButton() {
 }
 document.addEventListener("themechange", () => { syncThemeButton(); renderPage(currentPage()); });
 syncThemeButton();
+
+// The small status card at the foot of the navigation: can this server start new trials?
+function syncLivePill(health) {
+  const pill = document.querySelector("#live-pill");
+  if (!pill) return;
+  const live = !!health?.provider;
+  pill.classList.toggle("on", live);
+  document.querySelector("#live-pill-title").textContent = live ? "Live trials on" : "Read-only";
+  document.querySelector("#live-pill-sub").textContent = live ? `${health.provider}${health.model ? " · " + health.model : ""}` : "No LLM key set";
+}
