@@ -11,7 +11,7 @@ let activeQuestion = sessionStorage.getItem("ragnarisk-active-question") || SAMP
 
 const state = { caseId: sessionStorage.getItem("ragnarisk-case") || "", cases: [], running: null, canRun: false, live: [], lastSeq: -1, timer: null, feed: [], feedTimer: null, run: null,
   answerId: sessionStorage.getItem("ragnarisk-answer") || "", asOf: "", askNotice: "",
-  askMode: sessionStorage.getItem("ragnarisk-mode") === "full" ? "full" : "fast",
+  askMode: sessionStorage.getItem("ragnarisk-mode") === "fast" ? "fast" : "full",  // Full trial is the default: only it shows a remand and a second run
   answerView: sessionStorage.getItem("ragnarisk-view") === "complete" ? "complete" : "summary", histQ: "" };
 // Fast answer: per-trial limits the server already accepts (OPTION_RANGES). One run, so no remand.
 const FAST_OPTIONS = { min_runs: 1, max_runs: 1, max_claims_per_side: 3, max_steps_per_turn: 5 };
@@ -928,7 +928,7 @@ function renderAsk() {
         <textarea id="ask-query" rows="3" placeholder="For example: how exposed is Midgard to the end of the Orvan corridor agreement?">${escapeHtml(activeQuestion)}</textarea>
         <fieldset class="ask-mode"><legend class="sr-only">How thorough</legend>
           <label><input type="radio" name="ask-mode" value="fast" ${state.askMode === "fast" ? "checked" : ""} /> <span><b>Fast answer</b><small>One trial run, fewer claims per side. Quicker.</small></span></label>
-          <label><input type="radio" name="ask-mode" value="full" ${state.askMode === "full" ? "checked" : ""} /> <span><b>Full trial</b><small>Two runs with Odin's remand. Most rigorous, slower.</small></span></label>
+          <label><input type="radio" name="ask-mode" value="full" ${state.askMode === "full" ? "checked" : ""} /> <span><b>Full trial</b><small>Two runs with Odin's remand. Most rigorous, slower. Recommended.</small></span></label>
         </fieldset>
         <div class="ask-row">
           <label class="ask-date">As of <input type="date" id="ask-asof" value="${escapeHtml(state.asOf)}" /></label>
@@ -971,7 +971,8 @@ async function askQuestion(question, asOf) {
   try { await refreshCases(); } catch (error) { return showToast(error.message); }
   const wanted = asOf || state.asOf;
   // the same question (and date) already answered: show it instead of paying for a new trial
-  const saved = state.cases.find((c) => normQ(c.question) === normQ(question) && (!wanted || c.as_of === wanted) && c.rulings > 0 && c.status !== "ABORTED");
+  // only a COMPLETE answer is reused (a provisional one must not block a rerun), and a Fast answer does not stand in for a Full trial
+  const saved = state.cases.find((c) => normQ(c.question) === normQ(question) && (!wanted || c.as_of === wanted) && c.status === "COMPLETE" && (state.askMode === "fast" || c.runs >= 2));
   if (saved) return showAnswer(saved.case_id);
   if (!state.canRun) {
     state.askNotice = "Live answers are off on this server because no LLM key is configured. Open a recent answer below, or add a key and restart the server.";
@@ -1446,6 +1447,10 @@ document.addEventListener("keydown", (event) => {
 
 window.addEventListener("hashchange", () => {
   const page = currentPage();
+  if (page === "ask" && linkedAnswer() && linkedAnswer() !== state.answerId) {  // a link to one answer (#ask/<case_id>) opens it
+    state.answerId = linkedAnswer();
+    try { sessionStorage.setItem("ragnarisk-answer", state.answerId); } catch { /* optional */ }
+  }
   if (Object.hasOwn(pageTitles, page)) renderPage(page);
 });
 

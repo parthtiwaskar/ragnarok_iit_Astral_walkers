@@ -1386,3 +1386,11 @@ html[data-theme="light"] .page-footer, html[data-theme="light"] .page-footer spa
 .trail-docs { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 4px; color: var(--subtle); align-items: center; }
 .trail-err { color: var(--rose); }
 @media print { .rp-trail { margin: 2px 0 6px; padding-left: 18px; font-size: 8.5pt; color: #333; } }
+
+/* the phone rule above turns the case tables into cards; the exposure table is a real grid and must scroll sideways instead of being cut off */
+.table-scroll:has(> .exposure-table) { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+/* citation popovers are anchored to the whole row of chips, so they can never run off the right edge of a narrow screen */
+.cites { position: relative; }
+.cite { position: static; }
+.cite .pop { left: 0; right: auto; width: auto; min-width: min(280px, 100%); max-width: min(420px, 100%); }

@@ -33,6 +33,7 @@ Browsing the corpus and saved cases needs no key.
 | Add a new event pack **live**, no code change, no restart | Evidence page, Data intake, *Upload pack (.zip)*; or `POST /api/ingest` (zip body); or drop a folder or zip into `data/live_packs/` |
 | Ask with a simulated clock | Write it in the question ("As of 25 January 2027, ..."); the date is read from the text |
 | Check a case against the 10 minimum criteria | `python -m nine_realms.acceptance <case_id>` (also shown at the bottom of the Briefing page) |
+| Produce the submission log in one command | `python -m nine_realms.realrun` (checks the key, runs a Full trial, writes `runs/<case_id>/` only if it is a valid two-run case) |
 | Save a case as the submission log | `python -m nine_realms.export <case_id>` writes `runs/<case_id>/` (`case.json`, `events.jsonl`, `briefing.md`, `acceptance.json`) |
 | Rehearse the final round with no key | `python -m nine_realms.rehearsal --out /tmp/pack_e9 --kind damaged`, then `python -m nine_realms.dryrun --extra-pack /tmp/pack_e9`. This is a **scripted** court over the real corpus: it proves the pipeline, not model quality |
 | Run the tests | `python -m pytest nine_realms/tests` |
